@@ -53,7 +53,7 @@ public sealed record ChatMessage(
 
 public sealed record ToolCall(string Id, string Name, string ArgumentsJson);
 
-public static class Json
+public static class JsonUtil
 {
     public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
