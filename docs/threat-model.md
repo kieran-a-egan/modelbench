@@ -24,11 +24,11 @@
 | # | Threat (STRIDE) | Mitigation | Verified by |
 |---|---|---|---|
 | T1 | Candidate code reaches the network (exfiltration, downloads) | `--network none` | `SandboxAdversarialTests.NoNetwork` |
-| T2 | Candidate code reads host files or secrets | no host mounts except the per-request read-only `/input`; no env vars passed; non-root uid 65534 | `ReadsHostFiles`, `EnvIsEmpty` |
+| T2 | Candidate code reads host files or secrets | no mounts at all (request piped via stdin); no env vars passed; non-root uid 65534 | `ReadsHostFiles`, `EnvIsEmpty` |
 | T3 | Candidate code reads expected outputs to cheat | expected values never enter the container (ADR 0002); `SandboxRequest` has no field for them | `HiddenIsolationTests.SandboxRequestHasNoHiddenData` |
 | T4 | Resource exhaustion (fork bomb, memory bomb, CPU spin, disk fill, giant output) | `--pids-limit 64`, `--memory 256m --memory-swap 256m`, `--cpus 1`, read-only rootfs + 64 MB tmpfs, wall-clock `docker kill`, 1 MB output cap | `ForkBomb`, `MemoryBomb`, `InfiniteLoop`, `GiantOutput`, `DiskFill` |
 | T5 | Privilege escalation in the container | `--cap-drop ALL`, `no-new-privileges`, non-root, read-only rootfs | `CannotWriteRootfs`, `RunsAsNobody` |
-| T6 | Forged result frames (printing fake "pass" output) | per-request random nonce; host takes the last `MBRESULT:<nonce>:` line; forgery gains nothing because comparison happens on the host | `ForgedFrameIgnored` |
+| T6 | Forged result frames or timings | per-request random nonce; host takes the last `MBRESULT:<nonce>:` line; output forgery gains nothing because comparison happens on the host; performance verdicts use only the host wall clock | `ForgedFrameIgnored`, `PerformanceUsesHostClock` |
 | T7 | Hidden data leaked through prompts | request builders take only `TaskPrompt`; marker test across all families | `HiddenIsolationTests.PromptsHaveNoHiddenMarkers` |
 | T8 | Prompt injection in task content making the model leak or act | measured (adversarial-robustness family, `canary` grader); simulated tools have no real effects | family tests |
 | T9 | Stored XSS through candidate output in the dashboard | Blazor's default HTML encoding; `MarkupString` is never used with candidate or task content (enforced by a source-scan test) | `UiSafetyTests.NoMarkupStringOnUntrusted` |

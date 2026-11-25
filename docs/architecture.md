@@ -134,7 +134,7 @@ Grader type ids (`GraderSpec.Type`) and their `Config`:
 | `compile` | `{ language, entryPoint }` | one |
 | `unit-tests` | `{ language, entryPoint, cases: [{ args: [..], expected: json }], tolerance?: number }` | one per case |
 | `differential` | same shape as unit-tests; cases are seeded random inputs whose expected values come from the host reference solver | one per case |
-| `performance` | `{ language, entryPoint, args: [..], expected: json, budgetMs: number }` | `correct`, `within-budget` |
+| `performance` | `{ language, entryPoint, args: [..], expected: json, budgetMs: number }`. Runs the case alone with the sandbox `TimeoutMs = budgetMs`. Within-budget means not killed by the **host** wall clock; in-container timings are informational only, because candidate code can forge them | `correct`, `within-budget` |
 | `ast` | `{ language, rules: [{ kind: "defines"\|"forbids-import"\|"forbids-call"\|"requires-loop"\|"forbids-recursion", name? }] }` | one per rule |
 | `tool-calls` | `{ required: [{ name, args?: json-subset, }], ordered?: bool, forbidden?: [name], maxCalls?: int }` | one per requirement |
 | `env-state` | `{ expected: json-subset }` (dot-paths into the final state) | one per path |
@@ -145,10 +145,10 @@ The `unit-tests`, `differential` and `performance` graders send `SandboxRequest(
 ## Sandbox (ADR 0003)
 
 `DockerSandbox` drives the `docker` CLI and talks to the in-container runner over a simple protocol:
-- It writes `request.json` (code, entryPoint, inputs, action, repetitions, nonce) into a fresh temp directory and mounts it read-only at `/input`.
+- It pipes the request JSON (code, entryPoint, inputs, action, repetitions, nonce) to the container's **stdin** (`docker run -i`). Nothing is mounted. The runner reads stdin fully before loading candidate code.
 - The runner prints one line, `MBRESULT:<nonce>:<base64 json>`. The nonce is random per execution.
 - Images are `modelbench-python:1` and `modelbench-dotnet:1`.
-- Container flags: `--rm --network none --read-only --tmpfs /tmp:rw,size=64m --memory 256m --memory-swap 256m --cpus 1 --pids-limit 64 --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 -v <dir>:/input:ro -e HOME=/tmp`.
+- Container flags: `--rm --network none --read-only --tmpfs /tmp:rw,size=64m --memory 256m --memory-swap 256m --cpus 1 --pids-limit 64 --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 -e HOME=/tmp -i`.
 - The host enforces a wall-clock limit of `TimeoutMs` + 5 s grace by running `docker kill`, and caps captured output at 1 MB.
 
 ## Metrics (ADR 0008)

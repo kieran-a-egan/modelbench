@@ -7,7 +7,7 @@
 - Attempt score = Σ(weight × score) / Σ(weight). An attempt passes when every required assertion passes.
 - A grader that cannot run (no answer) still records its assertions as failed, so the failure view is complete.
 - Run pass rate and mean score exclude InfraError, Timeout and Cancelled attempts. Those are reported separately.
-- Performance assertions use generous absolute budgets per complexity tier (≥ 5× the expected time of an asymptotically correct solution) and take the minimum of 3 repetitions. The input sizes are chosen so the wrong complexity class misses the budget by ≥ 10×.
+- Performance assertions run a large input under a host-enforced wall-clock budget, including container start-up. The budget is at least 5× the time an asymptotically correct solution needs. Input sizes are chosen so the wrong complexity class misses the budget by at least 10×. In-container timings are recorded for information only.
 
 ## Consequences
 - Performance results can, in principle, flip on an overloaded host. This noise ceiling is documented.

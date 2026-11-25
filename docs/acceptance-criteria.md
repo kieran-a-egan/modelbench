@@ -15,7 +15,7 @@ Evidence is either a test name (`Class.Method`) or a recorded manual check in `d
 | AC-04 | Established before execution | A run can only be created for a persisted suite. Task instances have no update path. | RunService | `RunServiceTests.RequiresPersistedSuite` | ☐ |
 | AC-05 | Reproducible instances | The same spec and seed produce identical suite hashes. `suite verify` passes. Golden hash per family. | SuiteGenerator | `ReproducibilityTests` | ☐ |
 | AC-06 | Hidden data not in prompts | Hidden markers never appear in serialized provider requests (all families, all adapters). | EpisodeRunner, adapters | `HiddenIsolationTests` | ☐ |
-| AC-07 | Hidden data not in sandbox | The sandbox request carries no expected values. An adversarial read of `/input` finds no expected outputs. | DockerSandbox | `HiddenIsolationTests`, `SandboxAdversarialTests` | ☐ |
+| AC-07 | Hidden data not in sandbox | The sandbox request carries no expected values. Nothing is mounted into the container; the request is piped via stdin. An adversarial scan of the container filesystem finds no expected outputs. | DockerSandbox | `HiddenIsolationTests`, `SandboxAdversarialTests` | ☐ |
 | AC-08 | Sandbox isolation | No network, read-only rootfs, non-root, memory/pid/cpu limits, timeout and output cap are all enforced. | DockerSandbox, sandbox/* | `SandboxAdversarialTests` | ☐ |
 | AC-09 | No fabricated telemetry | Missing usage becomes an Unavailable metric. Every metric has a provenance. | Metrics | `MetricsTests` | ☐ |
 | AC-10 | Generators validated | All 13 families: seeded, complexity 1..5, independent `Validate`. Selftest: reference turns score 1.0 and every known-bad turn fails a required assertion. | Families/*, SelfTest | `SelfTestTests` (all families × complexities) | ☐ |
