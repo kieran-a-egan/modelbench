@@ -28,21 +28,31 @@ public class ConcurrencyAndResumeTests
         Assert.All(rows, a => Assert.True(a.Outcome is AttemptOutcome.Passed or AttemptOutcome.Failed, a.Outcome.ToString()));
     }
 
-    [Fact] public async Task FourWorkersAreRoughlyFourTimesFasterAndPersistEveryAttemptOnce()
+    [Fact] public async Task FourWorkersRunConcurrentlyAndPersistEveryAttemptOnce()
     {
         using var dir = new TempDir();
         using var db = dir.OpenDb();
-        await using var server = await FakeServer.StartAsync(Slow(300));
+        // Concurrency is proven by the peak number of in-flight requests seen by the server, not by wall time
+        // (wall-time assertions flake when the full suite runs Docker tests in parallel).
+        int inFlight = 0, peak = 0;
+        await using var server = await FakeServer.StartAsync((_, _) =>
+        {
+            var now = Interlocked.Increment(ref inFlight);
+            int seen;
+            while ((seen = Volatile.Read(ref peak)) < now && Interlocked.CompareExchange(ref peak, now, seen) != seen) { }
+            Thread.Sleep(300);
+            Interlocked.Decrement(ref inFlight);
+            return FakeReply.Text("<answer>1</answer>");
+        });
         var suite = TestKit.MakeSuite(db, 8);
         var model = TestKit.Model(server.BaseUrl);
         var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null, concurrency: 4);
         var done = new List<int>();
         var ex = Exec(model);
         ex.AttemptCompleted += p => done.Add(p.Done);
-        var sw = Stopwatch.StartNew();
         await ex.ExecuteAsync(db, run.Id, default);
-        sw.Stop();
-        Assert.True(sw.Elapsed < TimeSpan.FromMilliseconds(8 * 350 * 0.6), $"took {sw.Elapsed}"); // sequential would be >= 2.4 s + overhead
+        Assert.True(peak >= 2, $"peak in-flight requests {peak}: workers did not overlap");
+        Assert.True(peak <= 4, $"peak in-flight requests {peak} exceeds concurrency 4");
         AssertOneTerminalRowPerItem(db, run.Id, 8, 1);
         Assert.Equal(Enumerable.Range(1, 8), done); // progress is serialised and monotonic
         Assert.Equal(RunStatus.Completed, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status);
