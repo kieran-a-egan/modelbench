@@ -120,13 +120,13 @@ public sealed class PolicyEvaluationFamily : IBenchmarkFamily
     {
         var sb = new StringBuilder("Below is an access-control policy for a document system, followed by cases. Decide each case under the policy.\n\nRules:\n");
         for (var i = 0; i < r.Rules.Length; i++)
-            sb.AppendLine($"Rule {i + 1}: {r.Rules[i].Effect} when {string.Join(" and ", r.Rules[i].Conds.Select(Phrase))}.");
-        sb.AppendLine().AppendLine($"Precedence: {(r.Mode == FirstMatch ? FirstMatchText : DenyOverridesText)} If no rule matches, the decision is deny.")
-            .AppendLine().AppendLine("Cases:");
+            sb.Ln($"Rule {i + 1}: {r.Rules[i].Effect} when {string.Join(" and ", r.Rules[i].Conds.Select(Phrase))}.");
+        sb.Ln().Ln($"Precedence: {(r.Mode == FirstMatch ? FirstMatchText : DenyOverridesText)} If no rule matches, the decision is deny.")
+            .Ln().Ln("Cases:");
         var ids = Enumerable.Range(1, r.Cases.Length).Select(i => $"case-{i}").ToArray();
         for (var i = 0; i < ids.Length; i++)
-            sb.AppendLine($"{ids[i]}: {string.Join(", ", Attrs.Select((a, k) => $"{a}={r.Cases[i][k]}"))}");
-        sb.AppendLine().Append("Reply with one JSON object mapping every case id to \"allow\" or \"deny\", for example {\"case-1\":\"allow\",\"case-2\":\"deny\"}, inside <answer></answer> tags.");
+            sb.Ln($"{ids[i]}: {string.Join(", ", Attrs.Select((a, k) => $"{a}={r.Cases[i][k]}"))}");
+        sb.Ln().Append("Reply with one JSON object mapping every case id to \"allow\" or \"deny\", for example {\"case-1\":\"allow\",\"case-2\":\"deny\"}, inside <answer></answer> tags.");
 
         var decisions = r.Cases.Select(v => Decide(r.Rules, r.Mode, v)).ToArray();
         var schema = new

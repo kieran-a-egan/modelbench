@@ -14,7 +14,7 @@ namespace ModelBench.Core.Families;
 public sealed class ConstraintSatisfactionFamily : IBenchmarkFamily
 {
     public string Id => "constraint-satisfaction";
-    public int Version => 1;
+    public int Version => 2; // v2: platform-independent LF line endings
     public string Category => "constraint-satisfaction";
     public string Description => "Knapsack, deadline scheduling and graph colouring with a provably optimal reference answer.";
     public ExecutionMode Mode => ExecutionMode.SingleTurn;
@@ -176,25 +176,25 @@ public sealed class ConstraintSatisfactionFamily : IBenchmarkFamily
         switch (problem)
         {
             case "knapsack":
-                sb.AppendLine($"You have a knapsack with capacity {inst.GetProperty("capacity").GetInt32()}. Choose a set of items with the largest possible total value whose total weight does not exceed the capacity. Each item can be used at most once.").AppendLine()
-                  .AppendLine("| id | weight | value |").AppendLine("|---|---|---|");
+                sb.Ln($"You have a knapsack with capacity {inst.GetProperty("capacity").GetInt32()}. Choose a set of items with the largest possible total value whose total weight does not exceed the capacity. Each item can be used at most once.").Ln()
+                  .Ln("| id | weight | value |").Ln("|---|---|---|");
                 foreach (var i in inst.GetProperty("items").EnumerateArray())
-                    sb.AppendLine($"| {i.GetProperty("id").GetInt32()} | {i.GetProperty("weight").GetInt32()} | {i.GetProperty("value").GetInt32()} |");
-                sb.AppendLine().Append("Give the chosen item ids inside <answer></answer> tags as a JSON object, exactly in this form: <answer>{\"items\":[1,4,7]}</answer>");
+                    sb.Ln($"| {i.GetProperty("id").GetInt32()} | {i.GetProperty("weight").GetInt32()} | {i.GetProperty("value").GetInt32()} |");
+                sb.Ln().Append("Give the chosen item ids inside <answer></answer> tags as a JSON object, exactly in this form: <answer>{\"items\":[1,4,7]}</answer>");
                 break;
             case "schedule":
-                sb.AppendLine("A single machine runs one task at a time and cannot interrupt a task. Each task has a release time (it cannot start earlier), a duration and a deadline (it must finish no later than this). Start times are integers. "
-                    + "Schedule every task exactly once so that the makespan, the time at which the last task finishes, is as small as possible.").AppendLine()
-                  .AppendLine("| id | release | duration | deadline |").AppendLine("|---|---|---|---|");
+                sb.Ln("A single machine runs one task at a time and cannot interrupt a task. Each task has a release time (it cannot start earlier), a duration and a deadline (it must finish no later than this). Start times are integers. "
+                    + "Schedule every task exactly once so that the makespan, the time at which the last task finishes, is as small as possible.").Ln()
+                  .Ln("| id | release | duration | deadline |").Ln("|---|---|---|---|");
                 foreach (var t in inst.GetProperty("tasks").EnumerateArray())
-                    sb.AppendLine($"| {t.GetProperty("id").GetInt32()} | {t.GetProperty("release").GetInt32()} | {t.GetProperty("duration").GetInt32()} | {t.GetProperty("deadline").GetInt32()} |");
-                sb.AppendLine().Append("Give the schedule inside <answer></answer> tags as a JSON object, exactly in this form: <answer>{\"schedule\":[{\"id\":1,\"start\":0},{\"id\":2,\"start\":5}]}</answer>");
+                    sb.Ln($"| {t.GetProperty("id").GetInt32()} | {t.GetProperty("release").GetInt32()} | {t.GetProperty("duration").GetInt32()} | {t.GetProperty("deadline").GetInt32()} |");
+                sb.Ln().Append("Give the schedule inside <answer></answer> tags as a JSON object, exactly in this form: <answer>{\"schedule\":[{\"id\":1,\"start\":0},{\"id\":2,\"start\":5}]}</answer>");
                 break;
             default:
                 var n = inst.GetProperty("vertices").GetInt32();
-                sb.AppendLine($"An undirected graph has vertices 0 to {n - 1} and the edges listed below. Colour every vertex with a positive integer so that the two ends of every edge get different colours, using as few distinct colours as possible. "
-                    + $"You may use at most {inst.GetProperty("maxColors").GetInt32()} distinct colours.").AppendLine()
-                  .AppendLine("Edges: " + string.Join(", ", inst.GetProperty("edges").EnumerateArray().Select(e => $"({e[0].GetInt32()},{e[1].GetInt32()})"))).AppendLine()
+                sb.Ln($"An undirected graph has vertices 0 to {n - 1} and the edges listed below. Colour every vertex with a positive integer so that the two ends of every edge get different colours, using as few distinct colours as possible. "
+                    + $"You may use at most {inst.GetProperty("maxColors").GetInt32()} distinct colours.").Ln()
+                  .Ln("Edges: " + string.Join(", ", inst.GetProperty("edges").EnumerateArray().Select(e => $"({e[0].GetInt32()},{e[1].GetInt32()})"))).Ln()
                   .Append($"Give the colours inside <answer></answer> tags as a JSON object whose \"colors\" array has {n} integers, where element i is the colour of vertex i, exactly in this form: <answer>{{\"colors\":[1,2,1]}}</answer>");
                 break;
         }

@@ -118,7 +118,7 @@ public sealed class DataTransformationFamily : IBenchmarkFamily
     {
         var sb = new StringBuilder($"You are given a table named `{s.Table}` as {(asJson ? "JSON" : "CSV")}.\n\n");
         if (asJson)
-            sb.AppendLine(new JsonArray(s.Rows.Select(r =>
+            sb.Ln(new JsonArray(s.Rows.Select(r =>
             {
                 var o = new JsonObject();
                 for (var i = 0; i < s.Cols.Length; i++) o[s.Cols[i]] = s.NumCols.Contains(s.Cols[i]) ? JsonValue.Create(long.Parse(r[i])) : JsonValue.Create(r[i]);
@@ -126,24 +126,24 @@ public sealed class DataTransformationFamily : IBenchmarkFamily
             }).ToArray()).ToJsonString());
         else
         {
-            sb.AppendLine(string.Join(",", s.Cols));
-            foreach (var r in s.Rows) sb.AppendLine(string.Join(",", r));
+            sb.Ln(string.Join(",", s.Cols));
+            foreach (var r in s.Rows) sb.Ln(string.Join(",", r));
         }
-        sb.AppendLine().AppendLine("Transform it as follows, in this order:");
+        sb.Ln().Ln("Transform it as follows, in this order:");
         var n = 1;
         if (s.Filters.Length > 0)
-            sb.AppendLine($"{n++}. Keep only the rows where " + string.Join(" and ", s.Filters.Select(f => $"{f.Col} {f.Op} {(s.NumCols.Contains(f.Col) ? f.Value : $"\"{f.Value}\"")}")) + ".");
-        sb.AppendLine($"{n++}. Group the remaining rows by {string.Join(" and ", s.GroupBy)}.");
-        sb.AppendLine($"{n++}. For each group compute: " + string.Join("; ", s.Aggs.Select(a => a.Fn switch
+            sb.Ln($"{n++}. Keep only the rows where " + string.Join(" and ", s.Filters.Select(f => $"{f.Col} {f.Op} {(s.NumCols.Contains(f.Col) ? f.Value : $"\"{f.Value}\"")}")) + ".");
+        sb.Ln($"{n++}. Group the remaining rows by {string.Join(" and ", s.GroupBy)}.");
+        sb.Ln($"{n++}. For each group compute: " + string.Join("; ", s.Aggs.Select(a => a.Fn switch
         {
             "count" => "count = the number of rows",
             "avg" => $"{a.Name} = the mean of {a.Col}, rounded to 2 decimal places (half away from zero)",
             _ => $"{a.Name} = the {(a.Fn == "sum" ? "sum" : a.Fn == "min" ? "minimum" : "maximum")} of {a.Col}",
         })) + ".");
-        sb.AppendLine($"{n++}. Sort the groups by {s.SortBy} {(s.Desc ? "descending" : "ascending")}; break ties by " + string.Join(", then ", s.GroupBy.Select(g => $"{g} ascending (plain character-code order)")) + ".");
-        if (s.Limit > 0) sb.AppendLine($"{n}. Keep only the first {s.Limit} groups.");
+        sb.Ln($"{n++}. Sort the groups by {s.SortBy} {(s.Desc ? "descending" : "ascending")}; break ties by " + string.Join(", then ", s.GroupBy.Select(g => $"{g} ascending (plain character-code order)")) + ".");
+        if (s.Limit > 0) sb.Ln($"{n}. Keep only the first {s.Limit} groups.");
         var keys = s.GroupBy.Concat(s.Aggs.Select(a => a.Name)).ToArray();
-        sb.AppendLine().Append($"Reply with a JSON array of objects, one per group in the sorted order, each with exactly the keys {string.Join(", ", keys)} ")
+        sb.Ln().Append($"Reply with a JSON array of objects, one per group in the sorted order, each with exactly the keys {string.Join(", ", keys)} ")
             .Append("(numbers as JSON numbers, group values as strings), inside <answer></answer> tags. If you use code fences, still put them inside the tags.");
 
         var schema = new

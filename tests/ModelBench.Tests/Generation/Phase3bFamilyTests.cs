@@ -56,7 +56,7 @@ public abstract class ProceduralFamilyTests(IBenchmarkFamily family, string gold
     }
 }
 
-public class ConstraintSatisfactionFamilyTests() : ProceduralFamilyTests(new ConstraintSatisfactionFamily(), "ab9e7347f8e2ab1f61ed7da5bfe325bdeb79f97c4b4ae9d6d0425cf47827260e")
+public class ConstraintSatisfactionFamilyTests() : ProceduralFamilyTests(new ConstraintSatisfactionFamily(), "f60cb4a9f97b467ea83fbf0bc14453ed91517a50b825c9f12d59d3a157e53bcf")
 {
     [Fact] public void ValidateDetectsACorruptedOptimum()
     {
@@ -86,7 +86,7 @@ public class ConstraintSatisfactionFamilyTests() : ProceduralFamilyTests(new Con
     }
 }
 
-public class DeductiveReasoningFamilyTests(ITestOutputHelper output) : ProceduralFamilyTests(new DeductiveReasoningFamily(), "ae6ff91afed9838f006090d7341b2aac12b246b04364a6c4ad4b822c437cebc2")
+public class DeductiveReasoningFamilyTests(ITestOutputHelper output) : ProceduralFamilyTests(new DeductiveReasoningFamily(), "aafc9b0d6a412769b5c720c0e4b0195ed401fa747bf665b2abdee0a3dd59c2e8")
 {
     [Fact] public void GridSizeScalesFromThreeByThreeToFiveByFive()
     {

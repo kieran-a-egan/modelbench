@@ -15,7 +15,7 @@ namespace ModelBench.Core.Families;
 public sealed partial class DebuggingFamily : IBenchmarkFamily
 {
     public string Id => "debugging";
-    public int Version => 1;
+    public int Version => 2; // v2: platform-independent LF line endings
     public string Category => "debugging";
     public string Description => "Fix a Python function that carries 1-3 seeded bugs (flipped comparison, off-by-one, wrong variable, removed base case, swapped arguments).";
     public ExecutionMode Mode => ExecutionMode.SingleTurn;
@@ -252,9 +252,9 @@ public sealed partial class DebuggingFamily : IBenchmarkFamily
             var buggy = Apply(fn.Template, sites);
             var good = Apply(fn.Template, []);
             var user = new StringBuilder()
-                .AppendLine($"The following Python 3 function is meant to {fn.Desc}")
-                .AppendLine("It contains bugs. Fix them and reply with the complete corrected function in exactly one fenced code block.")
-                .AppendLine().AppendLine("```python").AppendLine(buggy).AppendLine("```").AppendLine()
+                .Ln($"The following Python 3 function is meant to {fn.Desc}")
+                .Ln("It contains bugs. Fix them and reply with the complete corrected function in exactly one fenced code block.")
+                .Ln().Ln("```python").Ln(buggy).Ln("```").Ln()
                 .Append($"For example, {Call(fn.Name, failing)} should return {J(fn.Solve(Elems(failing)))}, but the code above does not.")
                 .ToString();
             var graders = new List<GraderSpec>

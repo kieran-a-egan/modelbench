@@ -15,7 +15,7 @@ namespace ModelBench.Core.Families;
 public sealed class MathematicsFamily : IBenchmarkFamily
 {
     public string Id => "mathematics";
-    public int Version => 1;
+    public int Version => 2; // v2: platform-independent LF line endings
     public string Category => "mathematics";
     public string Description => "Exact rational arithmetic, modular arithmetic and combinatorics with a single exact answer.";
     public ExecutionMode Mode => ExecutionMode.SingleTurn;
@@ -39,10 +39,10 @@ public sealed class MathematicsFamily : IBenchmarkFamily
             _ => GenLattice(rng, c),
         };
         var user = new StringBuilder()
-            .AppendLine("Solve the following problem exactly.")
-            .AppendLine()
-            .AppendLine(Render(r))
-            .AppendLine()
+            .Ln("Solve the following problem exactly.")
+            .Ln()
+            .Ln(Render(r))
+            .Ln()
             .Append("You may show your working. Then give the final answer inside <answer></answer> tags, as a single exact value: ")
             .Append("an integer, or a fraction written as p/q in lowest terms (for example <answer>-7/12</answer>). ")
             .Append("Do not use decimals, units or any other text inside the tags.")

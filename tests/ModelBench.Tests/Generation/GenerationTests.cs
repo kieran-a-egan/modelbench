@@ -124,12 +124,18 @@ public class ReproducibilityTests
         Assert.Equal(64, t.ContentHash.Length);
         Assert.Equal(t.ContentHash, t.ContentHash.ToLowerInvariant());
         Assert.Equal(SuiteGenerator.SuiteHash(suite.Tasks.Select(x => x.ContentHash)), suite.ContentHash);
-        Assert.Equal(Rng.DeriveSeed(11, "mathematics", 1, 0), t.Seed);
-        Assert.Contains("\"version\":1", suite.SpecJson);
+        Assert.Equal(Rng.DeriveSeed(11, "mathematics", new MathematicsFamily().Version, 0), t.Seed);
+        Assert.Contains($"\"version\":{new MathematicsFamily().Version}", suite.SpecJson);
+    }
+
+    [Fact] public void ProceduralPromptsAreDistinctWithinASuite()
+    {
+        var suite = SuiteGenerator.Generate(new SuiteSpec("dups", 5, [new FamilySpec("mathematics", 1, 20)]));
+        Assert.Equal(20, suite.Tasks.Select(t => t.PromptJson).Distinct().Count());
     }
 
     [Fact] public void GoldenSuiteHashPinsTheGenerator()
-        => Assert.Equal("839240ef74e865fdfdb903b39acec3de8b7dce59bffd66bd8adf1ea0b7bf6d56", SuiteGenerator.Generate(new SuiteSpec("golden", 7, [new FamilySpec("mathematics", 2, 2), new FamilySpec("mathematics", 5, 2)])).ContentHash);
+        => Assert.Equal("3b241c961cb3c2ff9c851fe5344846e486e296ef3f70fb374d21767a1b61daf1", SuiteGenerator.Generate(new SuiteSpec("golden", 7, [new FamilySpec("mathematics", 2, 2), new FamilySpec("mathematics", 5, 2)])).ContentHash);
 
     [Fact] public void VerifyPassesOnAPersistedSuiteAndFailsAfterTampering()
     {

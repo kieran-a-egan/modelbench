@@ -17,6 +17,7 @@ public static class SuiteGenerator
         var recorded = new List<FamilySpec>();
         var suiteId = Guid.NewGuid();
         var index = 0;
+        var seenPrompts = new HashSet<string>();
         foreach (var fs in spec.Families)
         {
             var fam = FamilyRegistry.Get(fs.Family);
@@ -25,17 +26,32 @@ public static class SuiteGenerator
             recorded.Add(fs with { Version = fam.Version });
             for (var i = 0; i < fs.Count; i++, index++)
             {
-                var seed = Rng.DeriveSeed(spec.MasterSeed, fam.Id, fam.Version, index);
-                var generated = fam.Generate(new Rng(seed), fs.Complexity, i);
+                // Procedural families must not repeat a prompt within a suite: on collision, re-derive the seed
+                // deterministically with an attempt salt (so verify regenerates the same tasks). File-defined
+                // families repeat their tasks by design when Count exceeds their task count.
+                long seed;
+                GeneratedTask generated;
+                string prompt;
+                var attempt = 0;
+                while (true)
+                {
+                    seed = Rng.DeriveSeed(spec.MasterSeed, attempt == 0 ? fam.Id : $"{fam.Id}#{attempt}", fam.Version, index);
+                    generated = fam.Generate(new Rng(seed), fs.Complexity, i);
+                    prompt = JsonUtil.Serialize(generated.Prompt);
+                    if (fam is DefinitionFamily || seenPrompts.Add(prompt)) break;
+                    if (++attempt == 50)
+                        throw new InvalidOperationException($"{fam.Id} complexity {fs.Complexity} cannot produce {fs.Count} distinct tasks");
+                }
                 var check = fam.Validate(generated);
                 if (!check.Ok)
                     throw new InvalidOperationException($"{fam.Id} complexity {fs.Complexity} seed {seed} failed validation: {string.Join("; ", check.Problems)}");
-                var prompt = JsonUtil.Serialize(generated.Prompt);
                 var hidden = JsonUtil.Serialize(generated.Hidden);
                 tasks.Add(new TaskInstance
                 {
                     SuiteId = suiteId, Index = index, FamilyId = fam.Id, FamilyVersion = fam.Version, Category = fam.Category,
-                    Complexity = fs.Complexity, Seed = seed, Mode = fam.Mode, PromptJson = prompt, HiddenJson = hidden,
+                    // File-defined benchmarks carry their own difficulty; the spec complexity only drives procedural families.
+                    Complexity = fam is DefinitionFamily d ? d.DefinedComplexity : fs.Complexity,
+                    Seed = seed, Mode = fam.Mode, PromptJson = prompt, HiddenJson = hidden,
                     ContentHash = TaskHash(prompt, hidden),
                 });
             }

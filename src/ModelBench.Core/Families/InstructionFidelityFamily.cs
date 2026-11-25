@@ -74,12 +74,12 @@ public sealed class InstructionFidelityFamily : IBenchmarkFamily
         }
 
         var user = new StringBuilder()
-            .AppendLine($"Write a short note about {topic}. It must satisfy every one of the following constraints:")
-            .AppendLine();
-        for (var i = 0; i < constraints.Count; i++) user.AppendLine($"{i + 1}. {Describe(constraints[i])}");
-        user.AppendLine()
+            .Ln($"Write a short note about {topic}. It must satisfy every one of the following constraints:")
+            .Ln();
+        for (var i = 0; i < constraints.Count; i++) user.Ln($"{i + 1}. {Describe(constraints[i])}");
+        user.Ln()
             .Append("Definitions: a word is a maximal run of non-whitespace characters; a line is a non-empty line; ")
-            .AppendLine("a bullet line starts with \"- \" or \"* \" (after any leading whitespace).")
+            .Ln("a bullet line starts with \"- \" or \"* \" (after any leading whitespace).")
             .Append("Put only the finished note inside <answer></answer> tags (it may span several lines). Nothing else may appear inside the tags.");
 
         var hidden = new TaskHidden(

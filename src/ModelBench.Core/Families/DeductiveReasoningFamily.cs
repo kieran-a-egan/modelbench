@@ -13,7 +13,7 @@ namespace ModelBench.Core.Families;
 public sealed class DeductiveReasoningFamily : IBenchmarkFamily
 {
     public string Id => "deductive-reasoning";
-    public int Version => 1;
+    public int Version => 2; // v2: platform-independent LF line endings
     public string Category => "deductive-reasoning";
     public string Description => "Logic-grid puzzles with a unique solution, from 3x3 to 5x5.";
     public ExecutionMode Mode => ExecutionMode.SingleTurn;
@@ -257,11 +257,11 @@ public sealed class DeductiveReasoningFamily : IBenchmarkFamily
     {
         var n = r.Attrs[0].Values.Length;
         var sb = new StringBuilder();
-        sb.AppendLine($"{n} people stand in a row, in positions 1 (leftmost) to {n} (rightmost). Each person has exactly one value for every attribute below, and no two people share a value of the same attribute.").AppendLine();
-        foreach (var a in r.Attrs) sb.AppendLine($"- {a.Key}: {string.Join(", ", a.Values)}");
-        sb.AppendLine().AppendLine("Clues:");
-        for (var i = 0; i < r.Clues.Length; i++) sb.AppendLine($"{i + 1}. {Sentence(r.Attrs, r.Clues[i])}");
-        sb.AppendLine().AppendLine("Exactly one assignment satisfies every clue. Find it.").AppendLine()
+        sb.Ln($"{n} people stand in a row, in positions 1 (leftmost) to {n} (rightmost). Each person has exactly one value for every attribute below, and no two people share a value of the same attribute.").Ln();
+        foreach (var a in r.Attrs) sb.Ln($"- {a.Key}: {string.Join(", ", a.Values)}");
+        sb.Ln().Ln("Clues:");
+        for (var i = 0; i < r.Clues.Length; i++) sb.Ln($"{i + 1}. {Sentence(r.Attrs, r.Clues[i])}");
+        sb.Ln().Ln("Exactly one assignment satisfies every clue. Find it.").Ln()
           .Append("Give the full solution inside <answer></answer> tags as a JSON object with one key per person name, each holding an object with the keys ")
           .Append(string.Join(", ", r.Attrs.Skip(1).Select(a => $"\"{a.Key}\"")))
           .Append(". Every value is a JSON string (write positions as strings, like \"2\"). Form: <answer>{\"<name>\":{")

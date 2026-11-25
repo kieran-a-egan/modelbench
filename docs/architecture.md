@@ -76,6 +76,7 @@ Rules:
 
 - `SuiteSpec { Name, MasterSeed, Families: [{ Family, Complexity, Count }] }`. Generator versions are recorded per entry at generation time.
 - Each task's seed is `Rng.DeriveSeed(masterSeed, familyId, familyVersion, index)`. The family gets `new Rng(seed)`.
+- Procedural prompts are distinct within a suite. If a prompt repeats, the seed is re-derived with familyId `"<id>#<attempt>"` (attempt 1..49), so the result is still deterministic and `verify` reproduces it. File-defined families repeat tasks by design.
 - `TaskInstance.ContentHash` is `SHA256(PromptJson + "\n" + HiddenJson)` as lowercase hex. `Suite.ContentHash` is `SHA256` of the task hashes joined by `\n`, in index order.
 - `Validate` runs on every generated task. Generation fails loudly if validation fails, so it never retries silently with another seed. A family that needs rejection sampling does it *inside* `Generate`, using the same `Rng`.
 - `suite verify <id>` regenerates the suite from `SpecJson` and compares every hash.

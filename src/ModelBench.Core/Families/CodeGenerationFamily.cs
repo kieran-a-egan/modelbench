@@ -15,7 +15,7 @@ namespace ModelBench.Core.Families;
 public sealed class CodeGenerationFamily : IBenchmarkFamily
 {
     public string Id => "code-generation";
-    public int Version => 1;
+    public int Version => 2; // v2: platform-independent LF line endings
     public string Category => "code-generation";
     public string Description => "Write a Python or C# function from a specification; graded by compiling, hidden unit tests, seeded differential tests, a performance budget and AST rules.";
     public ExecutionMode Mode => ExecutionMode.SingleTurn;
@@ -69,12 +69,12 @@ public sealed class CodeGenerationFamily : IBenchmarkFamily
 
         var py = task.Lang == "python";
         var user = new StringBuilder()
-            .Append("Implement the following in ").AppendLine(py ? "Python 3." : "C#.").AppendLine()
-            .AppendLine(task.Desc).AppendLine()
-            .AppendLine("Signature:").Append("    ").AppendLine(task.Sig).AppendLine()
-            .AppendLine("Examples (arguments and result in JSON notation):");
-        foreach (var ex in task.Examples) user.Append("    ").Append(Call(task.Method, ex)).Append(" -> ").AppendLine(J(task.Solve(Elems(ex))));
-        user.AppendLine().Append(py
+            .Append("Implement the following in ").Ln(py ? "Python 3." : "C#.").Ln()
+            .Ln(task.Desc).Ln()
+            .Ln("Signature:").Append("    ").Ln(task.Sig).Ln()
+            .Ln("Examples (arguments and result in JSON notation):");
+        foreach (var ex in task.Examples) user.Append("    ").Append(Call(task.Method, ex)).Append(" -> ").Ln(J(task.Solve(Elems(ex))));
+        user.Ln().Append(py
                 ? "Use only the standard library and define the function at module level."
                 : "Define `public static class Solution` containing the public static method; System, System.Linq, System.Text and System.Collections.Generic are already imported.")
             .Append(constraints)
