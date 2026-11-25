@@ -3,7 +3,7 @@ using ModelBench.Core.Domain;
 
 namespace ModelBench.Core.Grading;
 
-/// <summary>Config: { expected: json, unorderedArrays?: bool }. One failed assertion per mismatching JSON path, or a single pass.</summary>
+/// <summary>Config: { expected: json, unorderedArrays?: bool, key?: string (compare only that top-level key of the answer object) }. One failed assertion per mismatching JSON path, or a single pass.</summary>
 public sealed class StructuralGrader : IGrader
 {
     public string Type => "structural";
@@ -23,8 +23,12 @@ public sealed class StructuralGrader : IGrader
         catch (JsonException ex) { return [AssertionOutcome.Check(spec.Name, false, expectedText, ctx.Answer, $"answer is not valid JSON: {ex.Message}")]; }
         using (doc)
         {
+            var root = doc.RootElement;
+            if (spec.Config.TryGetProperty("key", out var k)
+                && !(root.ValueKind == JsonValueKind.Object && root.TryGetProperty(k.GetString()!, out root)))
+                return [AssertionOutcome.Check(spec.Name, false, expectedText, ctx.Answer, $"missing key '{k.GetString()}'")];
             var diffs = new List<AssertionOutcome>();
-            Compare("$", expected, doc.RootElement, unordered, (path, e, a, why) =>
+            Compare("$", expected, root, unordered, (path, e, a, why) =>
                 diffs.Add(AssertionOutcome.Check($"{spec.Name}:{path}", false, e, a, why)));
             return diffs.Count == 0 ? [AssertionOutcome.Check(spec.Name, true, expectedText, ctx.Answer)] : diffs;
         }
