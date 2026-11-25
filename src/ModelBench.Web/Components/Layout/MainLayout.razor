@@ -1,9 +1,20 @@
 ﻿@inherits LayoutComponentBase
 
-@Body
+<div class="shell">
+    <nav class="side" aria-label="Main">
+        <strong class="brand">ModelBench</strong>
+        <a href="/">Home</a>
+        <a href="/models">Models</a>
+        <a href="/suites">Suites</a>
+        <a href="/runs">Runs</a>
+        <a href="/leaderboard">Leaderboard</a>
+        <a href="/compare">Compare</a>
+    </nav>
+    <main>@Body</main>
+</div>
 
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.
     <a href="." class="reload">Reload</a>
-    <span class="dismiss">🗙</span>
+    <span class="dismiss">x</span>
 </div>

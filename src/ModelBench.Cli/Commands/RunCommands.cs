@@ -6,6 +6,7 @@ using ModelBench.Core.Domain;
 using ModelBench.Core.Execution;
 using ModelBench.Core.Persistence;
 using ModelBench.Core.Providers;
+using ModelBench.Core.Reporting;
 using ModelBench.Core.Sandbox;
 using static ModelBench.Cli.Commands.CliContext;
 
@@ -76,38 +77,36 @@ internal static class RunCommands
 
     internal static void Report(BenchDb db, Guid runId, bool showFailures, TextWriter w)
     {
-        var run = db.Runs.AsNoTracking().Single(r => r.Id == runId);
-        var attempts = db.Attempts.AsNoTracking().Include(a => a.Task).Include(a => a.Assertions).Include(a => a.Metrics)
-            .Where(a => a.RunId == runId).ToList()
-            .OrderBy(a => a.Task!.Index).ThenBy(a => a.RepeatIndex).ToList();
+        var s = Reports.Summarize(db, runId);
+        w.WriteLine($"run {s.RunId}  model {S(s.ModelRef)}  mode {s.Mode}  status {s.Status}  suite {Short(s.SuiteId)}");
+        w.WriteLine("attempts: " + string.Join("  ", s.Outcomes.Select(t => $"{t.Outcome} {t.Count}")));
+        if (s.PassRate is { } pr)
+            w.WriteLine($"pass rate {s.Passed}/{s.Graded} = {F(pr)}   mean score {F(s.MeanScore!.Value)}  (infra errors, timeouts and cancellations excluded)");
+        if (s.Consistency is { } c) w.WriteLine($"consistency {F(c)}");
+        if (s.Excluded > 0) w.WriteLine($"excluded from scores: {s.Excluded}");
 
-        w.WriteLine($"run {run.Id}  model {S(run.ModelRef)}  mode {run.Mode}  status {run.Status}  suite {Short(run.SuiteId)}");
-        w.WriteLine("attempts: " + string.Join("  ", Enum.GetValues<AttemptOutcome>().Select(o => (o, n: attempts.Count(a => a.Outcome == o))).Where(t => t.n > 0).Select(t => $"{t.o} {t.n}")));
-
-        var graded = attempts.Where(a => a.Outcome is AttemptOutcome.Passed or AttemptOutcome.Failed).ToList();
-        if (graded.Count > 0)
-            w.WriteLine($"pass rate {graded.Count(a => a.Outcome == AttemptOutcome.Passed)}/{graded.Count} = {F(graded.Count(a => a.Outcome == AttemptOutcome.Passed) / (double)graded.Count)}   mean score {F(graded.Average(a => a.Score ?? 0))}  (infra errors, timeouts and cancellations excluded)");
-        var excluded = attempts.Count(a => a.Outcome is AttemptOutcome.InfraError or AttemptOutcome.Timeout or AttemptOutcome.Cancelled);
-        if (excluded > 0) w.WriteLine($"excluded from scores: {excluded}");
-
-        var rows = graded.GroupBy(a => (a.Task!.FamilyId, a.Task.Complexity)).OrderBy(g => g.Key.FamilyId, StringComparer.Ordinal).ThenBy(g => g.Key.Complexity)
-            .Select(g => new[] { g.Key.FamilyId, g.Key.Complexity.ToString(), g.Count().ToString(), g.Count(a => a.Outcome == AttemptOutcome.Passed).ToString(), F(g.Average(a => a.Score ?? 0)) })
-            .ToList();
-        if (rows.Count > 0) Table(w, ["FAMILY", "CX", "N", "PASSED", "MEAN SCORE"], rows);
-
-        foreach (var name in new[] { MetricNames.CostUsd, MetricNames.InputTokens, MetricNames.OutputTokens })
+        void Slices(string head, IReadOnlyList<Slice> slices)
         {
-            var ms = attempts.Select(a => a.Metrics.FirstOrDefault(m => m.Name == name)).ToList();
-            var measured = ms.Where(m => m?.Value is not null).ToList();
-            if (attempts.Count > 0) w.WriteLine($"{name}: {(measured.Count == 0 ? "unavailable" : measured.Sum(m => m!.Value!.Value).ToString("0.######", CultureInfo.InvariantCulture))}  ({measured.Count}/{attempts.Count} attempts)");
+            if (slices.Count > 0) Table(w, [head, "N", "PASSED", "PASS RATE", "MEAN SCORE"], slices.Select(g => new[] { S(g.Key), g.N.ToString(), g.Passed.ToString(), F(g.PassRate), F(g.MeanScore) }).ToList());
         }
+        Slices("FAMILY", s.ByFamily);
+        Slices("CATEGORY", s.ByCategory);
+        Slices("COMPLEXITY", s.ByComplexity);
+
+        foreach (var name in new[] { MetricNames.CostUsd, MetricNames.InputTokens, MetricNames.OutputTokens, MetricNames.ReasoningTokens, MetricNames.EnergyKwh, MetricNames.EnergyCostUsd })
+        {
+            var a = s.Metric(name);
+            var label = name.StartsWith("energy") ? name + " (Estimated)" : name;
+            if (s.Attempts > 0) w.WriteLine($"{label}: {(a.Total is { } t ? t.ToString("0.######", CultureInfo.InvariantCulture) : "unavailable")}  ({a.Coverage} attempts)");
+        }
+        w.WriteLine($"cost per success: {(s.CostPerSuccess is { } cps ? cps.ToString("0.######", CultureInfo.InvariantCulture) : "n/a")}");
 
         if (!showFailures) return;
-        foreach (var a in attempts.Where(a => a.Outcome != AttemptOutcome.Passed))
+        foreach (var a in Reports.Failures(db, runId))
         {
-            w.WriteLine($"\ntask {a.Task!.Index} {a.Task.FamilyId} c{a.Task.Complexity} repeat {a.RepeatIndex}: {a.Outcome}{(a.Score is { } s ? $" score {F(s)}" : "")}");
-            if (a.ErrorMessage is not null) w.WriteLine($"  error: {Truncate(a.ErrorMessage, 300)}");
-            foreach (var r in a.Assertions.Where(r => !r.Passed))
+            w.WriteLine($"\ntask {a.TaskIndex} {S(a.FamilyId)} c{a.Complexity} repeat {a.Repeat}: {a.Outcome}{(a.Score is { } sc ? $" score {F(sc)}" : "")}");
+            if (a.Error is not null) w.WriteLine($"  error: {Truncate(a.Error, 300)}");
+            foreach (var r in a.Assertions)
                 w.WriteLine($"  FAIL {Truncate(r.Name, 80)}: expected [{Truncate(r.Expected, 200)}] actual [{Truncate(r.Actual, 200)}] {Truncate(r.Diagnostic, 300)}");
         }
     }

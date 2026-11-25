@@ -1,0 +1,40 @@
+@page "/suites/{Id:guid}"
+@using Microsoft.EntityFrameworkCore
+@inject Func<BenchDb> Open
+
+<PageTitle>Suite</PageTitle>
+@if (suite is null)
+{
+    <h1>Suite not found</h1>
+}
+else
+{
+    <h1>Suite @suite.Name</h1>
+    <p>Seed @suite.MasterSeed, hash <code>@suite.ContentHash</code>, created @Fmt.Date(suite.CreatedAt)</p>
+    <details><summary>Spec</summary><pre>@Fmt.Pretty(suite.SpecJson)</pre></details>
+    <div class="scroll">
+    <table>
+        <tr><th class="num">#</th><th>Family</th><th>Category</th><th class="num">Complexity</th><th>Mode</th><th>Hash</th></tr>
+        @foreach (var t in tasks)
+        {
+            <tr><td class="num"><a href="/tasks/@t.Id">@t.Index</a></td><td>@t.FamilyId</td><td>@t.Category</td><td class="num">@t.Complexity</td><td>@t.Mode</td><td><code>@t.ContentHash[..12]</code></td></tr>
+        }
+    </table>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private Suite? suite;
+    private List<TaskInstance> tasks = [];
+
+    protected override void OnInitialized()
+    {
+        using var db = Open();
+        suite = db.Suites.AsNoTracking().FirstOrDefault(s => s.Id == Id);
+        // Prompt/hidden JSON are not needed for the listing.
+        tasks = db.Tasks.AsNoTracking().Where(t => t.SuiteId == Id).OrderBy(t => t.Index)
+            .Select(t => new TaskInstance { Id = t.Id, Index = t.Index, FamilyId = t.FamilyId, Category = t.Category, Complexity = t.Complexity, Mode = t.Mode, ContentHash = t.ContentHash, PromptJson = "", HiddenJson = "" }).ToList();
+    }
+}

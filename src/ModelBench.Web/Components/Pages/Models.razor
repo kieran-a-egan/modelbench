@@ -1,0 +1,86 @@
+@page "/models"
+@rendermode InteractiveServer
+@using ModelBench.Core.Config
+@inject ModelsFile File
+
+<PageTitle>Models</PageTitle>
+<h1>Models</h1>
+<p class="muted">File: <code>@File.Path</code> (@(File.Exists ? "found" : "not found; saving will create it")). API keys are never shown.</p>
+
+@if (loadError is not null)
+{
+    <p class="error" role="alert">@loadError</p>
+}
+else
+{
+    <div class="scroll">
+    <table>
+        <tr><th>Ref</th><th>API</th><th>Reasoning</th><th class="num">Context</th><th>Variants</th><th>Pricing (USD per 1M tokens)</th><th>Energy</th></tr>
+        @foreach (var r in rows)
+        {
+            <tr>
+                <td>@r.Entry.Ref</td><td>@r.Entry.Api</td><td>@(r.Entry.Reasoning ? "yes" : "no")</td><td class="num">@(r.Entry.ContextWindow?.ToString() ?? "-")</td>
+                <td>@(r.Entry.Variants.Count == 0 ? "-" : string.Join(", ", r.Entry.Variants))</td>
+                @if (r.Model is { } m)
+                {
+                    <td>@(m.Pricing is { } p ? $"in {p.Input}, out {p.Output}" + (p.Reasoning is { } rr ? $", reasoning {rr}" : "") : "-")</td>
+                    <td>@(m.Energy is { } e ? $"{e.Watts} W at {e.PricePerKwh}/kWh" : "-")</td>
+                }
+                else
+                {
+                    <td colspan="2" class="error">@r.Problem</td>
+                }
+            </tr>
+        }
+    </table>
+    </div>
+}
+
+<h2>models.json</h2>
+<p class="muted">Literal apiKey and header values show as <code>***</code>; leave them as is to keep the stored value. <code>{env:NAME}</code> references are shown unchanged. Comments in the file are not preserved on save.</p>
+<form class="stack" @onsubmit="Save">
+    <label>models.json <textarea rows="24" @bind="text" spellcheck="false"></textarea></label>
+    <div><button type="submit">Validate and save</button></div>
+</form>
+@if (message is not null)
+{
+    <p role="status" class="@(saved ? "" : "error")">@message</p>
+}
+
+@code {
+    private sealed record Row(CatalogEntry Entry, ResolvedModel? Model, string? Problem);
+
+    private List<Row> rows = [];
+    private string? loadError, message;
+    private bool saved;
+    private string text = "";
+
+    protected override void OnInitialized() => Reload();
+
+    private void Reload()
+    {
+        loadError = null;
+        rows = [];
+        try
+        {
+            text = File.MaskedText();
+            if (!File.Exists) return;
+            var catalog = File.Catalog();
+            foreach (var e in catalog.List())
+            {
+                try { rows.Add(new Row(e, catalog.Resolve(e.Ref), null)); }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { rows.Add(new Row(e, null, ex.Message)); }
+            }
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or IOException) { loadError = ex.Message; }
+    }
+
+    private void Save()
+    {
+        message = File.Save(text);
+        saved = message is null;
+        var edited = text;
+        Reload();
+        if (saved) message = "Saved."; else text = edited; // keep the user's edits when validation fails
+    }
+}

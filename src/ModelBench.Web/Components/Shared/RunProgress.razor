@@ -1,0 +1,64 @@
+@using Microsoft.EntityFrameworkCore
+@implements IDisposable
+@inject Func<BenchDb> Open
+@inject RunHostService Host
+@inject NavigationManager Nav
+
+<section aria-label="Run progress" aria-live="polite">
+    <h2>Progress</h2>
+    <p>Status <strong>@status</strong>: @done / @total attempts done@(counts.Length > 0 ? " (" + counts + ")" : "")</p>
+    @if (Active)
+    {
+        <button type="button" @onclick="Cancel">Cancel run</button>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Guid RunId { get; set; }
+
+    private readonly CancellationTokenSource cts = new();
+    private RunStatus status;
+    private int done, total;
+    private string counts = "";
+
+    private bool Active => status is RunStatus.Pending or RunStatus.Running;
+
+    protected override void OnInitialized() => Load();
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) _ = Poll();
+    }
+
+    private void Load()
+    {
+        using var db = Open();
+        var run = db.Runs.AsNoTracking().Single(r => r.Id == RunId);
+        var taskMode = run.Mode == ExecutionMode.Manual ? ExecutionMode.SingleTurn : run.Mode;
+        total = db.Tasks.Count(t => t.SuiteId == run.SuiteId && t.Mode == taskMode) * run.Repeats;
+        var outcomes = db.Attempts.Where(a => a.RunId == RunId).GroupBy(a => a.Outcome).Select(g => new { g.Key, N = g.Count() }).ToList();
+        done = outcomes.Where(o => o.Key != AttemptOutcome.Pending).Sum(o => o.N);
+        counts = string.Join(", ", outcomes.Where(o => o.Key != AttemptOutcome.Pending).Select(o => $"{o.Key} {o.N}"));
+        status = run.Status;
+    }
+
+    private async Task Poll()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1.5));
+        var wasActive = Active;
+        try
+        {
+            while (Active && await timer.WaitForNextTickAsync(cts.Token))
+            {
+                Load();
+                await InvokeAsync(StateHasChanged);
+            }
+            if (wasActive) await InvokeAsync(() => Nav.Refresh(forceReload: true)); // finished: reload the static summary
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private void Cancel() => Host.Cancel(RunId);
+
+    public void Dispose() => cts.Cancel();
+}
