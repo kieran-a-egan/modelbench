@@ -38,7 +38,7 @@ public sealed class ToolCallingFamily : IBenchmarkFamily
         Tool("calculate", "Evaluate an arithmetic expression with + - * / and parentheses on decimal numbers.", """{"expression":{"type":"string","description":"e.g. (12.50 + 3) * 1.0825"}}""", "expression"),
     ];
 
-    private static ToolDefinition Tool(string name, string description, string properties, params string[] required)
+    internal static ToolDefinition Tool(string name, string description, string properties, params string[] required)
         => new(name, description, JsonDocument.Parse($$"""{"type":"object","properties":{{properties}},"required":[{{string.Join(",", required.Select(r => $"\"{r}\""))}}]}""").RootElement.Clone());
 
     /// <summary>What the question is about; kept in TaskHidden.Reference for validation. To is the target currency for pending-total.</summary>
