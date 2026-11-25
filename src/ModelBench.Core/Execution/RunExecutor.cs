@@ -140,7 +140,7 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
                 try { episode = await EpisodeRunner.RunAsync(run.Mode, prompt, hidden, FamilyRegistry.Get(task.FamilyId), provider, cts.Token); break; }
                 catch (InfraException ex) when (ex.Retryable && attempt.Retries < policy.MaxRetries)
                 {
-                    await Task.Delay(policy.Delay(attempt.Retries++, run.Id, task.Id, repeat, (ex as RetryAfterException)?.RetryAfter), cts.Token);
+                    await Task.Delay(policy.Delay(attempt.Retries++, run.Id, task.Id, repeat, (ex as InfraException)?.RetryAfter), cts.Token);
                 }
             }
             var graded = await GradingPipeline.GradeAsync(prompt, hidden, episode.Transcript, episode.FinalEnvironmentState, sandbox, cts.Token);

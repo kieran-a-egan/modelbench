@@ -43,7 +43,9 @@ public interface IGrader
 }
 
 /// <summary>Infrastructure failure (transport, rate limit, 5xx, sandbox unavailable). Not a model failure.</summary>
-public class InfraException(string message, bool retryable = true, Exception? inner = null) : Exception(message, inner)
+public class InfraException(string message, bool retryable = true, Exception? inner = null, TimeSpan? retryAfter = null) : Exception(message, inner)
 {
     public bool Retryable { get; } = retryable;
+    /// <summary>Server-requested delay (HTTP Retry-After), honoured by the runner up to RetryPolicy.MaxDelayMs.</summary>
+    public TimeSpan? RetryAfter { get; } = retryAfter;
 }

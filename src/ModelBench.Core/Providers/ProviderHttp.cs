@@ -8,12 +8,6 @@ using ModelBench.Core.Grading;
 
 namespace ModelBench.Core.Providers;
 
-/// <summary>An HTTP-status infra failure that may carry the server's Retry-After (InfraException itself lives in Grading/, which this change does not touch).</summary>
-public sealed class RetryAfterException(string message, bool retryable, TimeSpan? retryAfter) : InfraException(message, retryable)
-{
-    public TimeSpan? RetryAfter { get; } = retryAfter;
-}
-
 /// <summary>Shared HTTP/SSE plumbing for the adapters: one error mapping (ADR 0007) and small JSON helpers.</summary>
 internal static class ProviderHttp
 {
@@ -44,7 +38,7 @@ internal static class ProviderHttp
                 var ra = resp.Headers.RetryAfter is { } h ? h.Delta ?? (h.Date is { } d ? d - DateTimeOffset.UtcNow : null) : null;
                 var msgText = $"HTTP {code}: {(err.Length > 500 ? err[..500] : err)}";
                 var retryable = code is 408 or 429 or >= 500;
-                throw ra is { } t && t > TimeSpan.Zero ? new RetryAfterException(msgText, retryable, t) : new InfraException(msgText, retryable);
+                throw new InfraException(msgText, retryable, retryAfter: ra is { } t && t > TimeSpan.Zero ? t : null);
             }
             return await parse(await resp.Content.ReadAsStreamAsync(ct), body, started, sw);
         }
