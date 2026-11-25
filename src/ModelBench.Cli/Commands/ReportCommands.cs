@@ -9,8 +9,10 @@ namespace ModelBench.Cli.Commands;
 internal static class ReportCommands
 {
     private static string F(double? v) => v is { } d ? d.ToString("0.000", CultureInfo.InvariantCulture) : "-";
-    private static string N(double? v) => v is { } d ? d.ToString("0.######", CultureInfo.InvariantCulture) : "-";
-    private static string D(double? v) => v is { } d ? d.ToString("+0.######;-0.######;0", CultureInfo.InvariantCulture) : "-";
+    /// <summary>Magnitude-aware: large values (ms, tokens) as integers, small ones (USD) keep their significant digits.</summary>
+    internal static string Num(double v) => v.ToString(Math.Abs(v) >= 100 ? "0" : Math.Abs(v) >= 1 ? "0.##" : "0.######", CultureInfo.InvariantCulture);
+    private static string N(double? v) => v is { } d ? Num(d) : "-";
+    private static string D(double? v) => v is { } d ? (d > 0 ? "+" : "") + Num(d) : "-";
 
     public static IEnumerable<Command> Build(CliContext cli)
     {

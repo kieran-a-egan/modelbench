@@ -39,8 +39,11 @@ public sealed class PerformanceGrader : IGrader
         [
             AssertionOutcome.Check("correct", correct, expected.GetRawText(), c is null ? null : CodeSupport.Actual(c),
                 why ?? (c!.Error is { } e ? "error: " + e : $"expected {expected.GetRawText()} but got {CodeSupport.Actual(c)}")),
-            AssertionOutcome.Check("within-budget", within, budgetText, $"{wall} ms",
-                r.TimedOut ? $"killed by the host after {wall} ms; budget {budget} ms" : $"host wall time {wall} ms exceeds the {budget} ms budget{inContainer}"),
+            // Actual is the verdict only, so re-grading is reproducible; the noisy measurement goes in the diagnostic.
+            new AssertionOutcome("within-budget", budgetText, within ? "within budget" : r.TimedOut ? "killed at budget" : "over budget",
+                within ? 1 : 0, within,
+                r.TimedOut ? $"killed by the host after {wall} ms; budget {budget} ms"
+                    : $"host wall time {wall} ms {(within ? "within" : "exceeds")} the {budget} ms budget{inContainer}"),
         ];
     }
 }

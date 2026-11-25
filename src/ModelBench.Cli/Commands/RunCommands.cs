@@ -145,9 +145,9 @@ internal static class RunCommands
         {
             var a = s.Metric(name);
             var label = name.StartsWith("energy") ? name + " (Estimated)" : name;
-            if (s.Attempts > 0) w.WriteLine($"{label}: {(a.Total is { } t ? t.ToString("0.######", CultureInfo.InvariantCulture) : "unavailable")}  ({a.Coverage} attempts)");
+            if (s.Attempts > 0) w.WriteLine($"{label}: {(a.Total is { } t ? ReportCommands.Num(t) : "unavailable")}  ({a.Coverage} attempts)");
         }
-        w.WriteLine($"cost per success: {(s.CostPerSuccess is { } cps ? cps.ToString("0.######", CultureInfo.InvariantCulture) : "n/a")}");
+        w.WriteLine($"cost per success: {(s.CostPerSuccess is { } cps ? ReportCommands.Num(cps) : "n/a")}");
 
         if (!showFailures) return;
         foreach (var a in Reports.Failures(db, runId))
