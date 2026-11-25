@@ -1,7 +1,23 @@
 ﻿@page "/"
+@inject Func<BenchDb> Open
 
-<PageTitle>Home</PageTitle>
+<PageTitle>ModelBench</PageTitle>
+<h1>ModelBench</h1>
+<p>Deterministic LLM benchmarking. Database: <code>@dbCounts</code></p>
+<ul>
+    <li><a href="/models">Models</a>: configured models and the models.json editor</li>
+    <li><a href="/suites">Suites</a>: generate, verify and inspect frozen suites</li>
+    <li><a href="/runs">Runs</a>: start, watch and cancel runs</li>
+    <li><a href="/leaderboard">Leaderboard</a>: per mode, per suite hash, with breakdowns and history</li>
+    <li><a href="/compare">Compare</a>: diff two runs on the same suite</li>
+</ul>
 
-<h1>Hello, world!</h1>
+@code {
+    private string dbCounts = "";
 
-Welcome to your new app.
+    protected override void OnInitialized()
+    {
+        using var db = Open();
+        dbCounts = $"{db.Suites.Count()} suites, {db.Runs.Count()} runs, {db.Attempts.Count()} attempts";
+    }
+}

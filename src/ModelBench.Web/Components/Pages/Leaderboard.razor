@@ -1,0 +1,81 @@
+@page "/leaderboard"
+@inject Func<BenchDb> Open
+
+<PageTitle>Leaderboard</PageTitle>
+<h1>Leaderboard</h1>
+<p class="muted">Boards are separate per execution mode. Rows are only comparable within one suite content hash. Pass rate and mean score exclude infra errors, timeouts and cancellations.</p>
+
+<nav class="tabs" aria-label="Execution mode">
+    @foreach (var m in Enum.GetValues<ExecutionMode>())
+    {
+        <a href="/leaderboard?mode=@m&view=@(View + AllQ)" aria-current="@(m == CurrentMode ? "page" : null)">@m</a>
+    }
+</nav>
+<nav class="tabs" aria-label="View">
+    <a href="/leaderboard?mode=@CurrentMode&view=rows@AllQ" aria-current="@(View != "breakdown" ? "page" : null)">Ranking</a>
+    <a href="/leaderboard?mode=@CurrentMode&view=breakdown" aria-current="@(View == "breakdown" ? "page" : null)">Breakdown</a>
+    @if (View != "breakdown")
+    {
+        <a href="/leaderboard?mode=@CurrentMode&view=rows&all=@(!All ? "true" : "false")">@(All ? "Latest run per model" : "Include all runs")</a>
+    }
+</nav>
+
+@if (groups.Count == 0) { <p>No completed @CurrentMode runs yet.</p> }
+@foreach (var g in groups)
+{
+    <h2>@g.SuiteName <small class="muted">hash @g.SuiteHash[..12]</small></h2>
+    @if (View == "breakdown")
+    {
+        var b = breakdowns[g.SuiteHash];
+        @foreach (var (title, m) in new[] { ("Category", b.ByCategory), ("Complexity", b.ByComplexity) })
+        {
+            <div class="scroll">
+            <table>
+                <tr><th>Model x @title</th>@foreach (var c in m.Columns) { <th>@c</th> }</tr>
+                @for (var i = 0; i < m.Models.Count; i++)
+                {
+                    <tr><th scope="row">@m.Models[i]</th>@foreach (var cell in m.Cells[i]) { <td><PassBar Value="cell" /></td> }</tr>
+                }
+            </table>
+            </div>
+        }
+    }
+    else
+    {
+        <div class="scroll">
+        <table>
+            <tr><th>Model</th><th>Run</th><th>Date</th><th>Pass rate</th><th class="num">Mean score</th><th class="num">Graded</th><th class="num">Infra / timeouts</th>
+                <th class="num">Consistency</th><th class="num">Median TTFT ms</th><th class="num">Mean tok/s</th><th class="num">Cost USD</th><th class="num">Cost / success</th></tr>
+            @foreach (var r in g.Rows)
+            {
+                <tr>
+                    <td><a href="/history?model=@Fmt.Q(r.ModelRef)&suite=@r.SuiteHash">@r.ModelRef</a></td><td><a href="/runs/@r.RunId">@Fmt.Short(r.RunId)</a></td><td>@Fmt.Date(r.CreatedAt)</td>
+                    <td><PassBar Value="r.PassRate" /></td><td class="num">@Fmt.Score(r.MeanScore)</td><td class="num">@r.Graded</td><td class="num">@r.InfraErrors / @r.Timeouts</td>
+                    <td class="num">@Fmt.Pct(r.Consistency)</td><td class="num">@Fmt.Num(r.Metric(MetricNames.TimeToFirstTokenMs).Median)</td>
+                    <td class="num">@Fmt.Num(r.Metric(MetricNames.ThroughputTps).Mean)</td>
+                    <td class="num">@Fmt.Num(r.Metric(MetricNames.CostUsd).Total) <span class="muted">(@r.Metric(MetricNames.CostUsd).Coverage)</span></td>
+                    <td class="num">@Fmt.Num(r.CostPerSuccess)</td>
+                </tr>
+            }
+        </table>
+        </div>
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery] public string? Mode { get; set; }
+    [SupplyParameterFromQuery] public string? View { get; set; }
+    [SupplyParameterFromQuery(Name = "all")] public bool All { get; set; }
+
+    private string AllQ => All ? "&all=true" : "";
+    private ExecutionMode CurrentMode => Enum.TryParse<ExecutionMode>(Mode, out var m) ? m : ExecutionMode.SingleTurn;
+    private List<LeaderboardGroup> groups = [];
+    private Dictionary<string, BreakdownResult> breakdowns = [];
+
+    protected override void OnParametersSet()
+    {
+        using var db = Open();
+        groups = Reports.Leaderboard(db, CurrentMode, null, All && View != "breakdown");
+        breakdowns = View == "breakdown" ? groups.ToDictionary(g => g.SuiteHash, g => Reports.Breakdown(db, CurrentMode, g.SuiteHash)) : [];
+    }
+}

@@ -1,0 +1,89 @@
+@page "/attempts/{Id:guid}"
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@inject Func<BenchDb> Open
+
+<PageTitle>Attempt</PageTitle>
+@if (attempt is null)
+{
+    <h1>Attempt not found</h1>
+}
+else
+{
+    <h1>Attempt: task @attempt.Task!.Index, repeat @attempt.RepeatIndex</h1>
+    <p>
+        <a href="/runs/@attempt.RunId">Run @Fmt.Short(attempt.RunId)</a>, @attempt.Task.FamilyId (@attempt.Task.Category), complexity @attempt.Task.Complexity,
+        outcome <strong>@attempt.Outcome</strong>, score @Fmt.Score(attempt.Score), retries @attempt.Retries
+    </p>
+    @if (attempt.ErrorMessage is not null) { <p class="error" role="alert">@attempt.ErrorMessage</p> }
+
+    <h2>Prompt</h2>
+    @if (prompt?.System is { Length: > 0 } sys) { <h3>System</h3><pre>@sys</pre> }
+    <h3>User</h3>
+    <pre>@prompt?.User</pre>
+
+    <h2>Final text</h2>
+    <pre>@attempt.FinalText</pre>
+
+    <h2>Assertions</h2>
+    <div class="scroll">
+    <table>
+        <tr><th>Grader</th><th>Name</th><th>Expected</th><th>Actual</th><th class="num">Score</th><th class="num">Weight</th><th>Required</th><th>Diagnostic</th></tr>
+        @foreach (var x in attempt.Assertions.OrderBy(x => x.Id))
+        {
+            <tr class="@(x.Passed ? "" : "fail")">
+                <td>@x.Grader</td><td>@x.Name</td><td>@x.Expected</td><td>@x.Actual</td><td class="num">@Fmt.Score(x.Score)</td>
+                <td class="num">@x.Weight</td><td>@(x.Required ? "yes" : "no")</td><td>@x.Diagnostic</td>
+            </tr>
+        }
+    </table>
+    </div>
+
+    <h2>Metrics</h2>
+    <table>
+        <tr><th>Name</th><th class="num">Value</th><th>Unit</th><th>Provenance</th></tr>
+        @foreach (var m in attempt.Metrics.OrderBy(m => m.Id))
+        {
+            <tr><td>@m.Name</td><td class="num">@Fmt.Num(m.Value)</td><td>@m.Unit</td><td>@m.Provenance</td></tr>
+        }
+    </table>
+
+    <h2>Transcript</h2>
+    @if (transcript is null) { <pre>@attempt.TranscriptJson</pre> }
+    else
+    {
+        @foreach (var msg in transcript)
+        {
+            <h3>@msg.Role@(msg.ToolName is { } tn ? " (" + tn + ")" : "")</h3>
+            @if (msg.Content is { Length: > 0 }) { <pre>@msg.Content</pre> }
+            @foreach (var c in msg.ToolCalls ?? [])
+            {
+                <p>Tool call <strong>@c.Name</strong> (@c.Id)</p>
+                <pre>@Fmt.Pretty(c.ArgumentsJson)</pre>
+            }
+        }
+    }
+
+    <h2>Raw requests</h2>
+    <pre>@Fmt.Pretty(attempt.RawRequestsJson)</pre>
+    <h2>Raw responses</h2>
+    <pre>@Fmt.Pretty(attempt.RawResponsesJson)</pre>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private Attempt? attempt;
+    private TaskPrompt? prompt;
+    private List<ChatMessage>? transcript;
+
+    protected override void OnInitialized()
+    {
+        using var db = Open();
+        attempt = db.Attempts.AsNoTracking().Include(a => a.Task).Include(a => a.Assertions).Include(a => a.Metrics).FirstOrDefault(a => a.Id == Id);
+        if (attempt is null) return;
+        prompt = JsonUtil.Deserialize<TaskPrompt>(attempt.Task!.PromptJson);
+        try { transcript = attempt.TranscriptJson is null ? null : JsonUtil.Deserialize<List<ChatMessage>>(attempt.TranscriptJson); }
+        catch (JsonException) { transcript = null; }
+    }
+}

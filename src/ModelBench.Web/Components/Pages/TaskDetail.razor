@@ -1,0 +1,44 @@
+@page "/tasks/{Id:guid}"
+@using Microsoft.EntityFrameworkCore
+@inject Func<BenchDb> Open
+
+<PageTitle>Task</PageTitle>
+@if (task is null)
+{
+    <h1>Task not found</h1>
+}
+else
+{
+    <h1>Task @task.Index (@task.FamilyId, complexity @task.Complexity)</h1>
+    <p><a href="/suites/@task.SuiteId">Back to suite</a>. Hash <code>@task.ContentHash</code>, seed @task.Seed, mode @task.Mode.</p>
+
+    <h2>Prompt (what the model sees)</h2>
+    <p class="muted">Answer format: @prompt?.AnswerFormat</p>
+    @if (prompt?.System is { Length: > 0 } sys) { <h3>System</h3><pre>@sys</pre> }
+    <h3>User</h3>
+    <pre>@prompt?.User</pre>
+    @if (prompt?.Tools is { Count: > 0 } tools)
+    {
+        <h3>Tools</h3>
+        @foreach (var t in tools) { <p><strong>@t.Name</strong>: @t.Description</p><pre>@Fmt.Pretty(t.ParametersSchema.GetRawText())</pre> }
+    }
+
+    <section class="hidden-data" aria-labelledby="hidden-h">
+        <h2 id="hidden-h">Hidden grading data (never sent to a model)</h2>
+        <pre>@Fmt.Pretty(task.HiddenJson)</pre>
+    </section>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private TaskInstance? task;
+    private TaskPrompt? prompt;
+
+    protected override void OnInitialized()
+    {
+        using var db = Open();
+        task = db.Tasks.AsNoTracking().FirstOrDefault(t => t.Id == Id);
+        if (task is not null) prompt = JsonUtil.Deserialize<TaskPrompt>(task.PromptJson);
+    }
+}

@@ -1,0 +1,47 @@
+@using ModelBench.Core.Domain
+
+<table>
+    <caption class="muted">Pass rate and mean score cover graded attempts only; infra errors, timeouts and cancellations are excluded and listed separately.</caption>
+    <tr><th scope="row">Model</th><td>@S.ModelRef</td></tr>
+    <tr><th scope="row">Suite</th><td><a href="/suites/@S.SuiteId">@S.SuiteName</a> <span class="muted">(hash @S.SuiteHash[..12])</span></td></tr>
+    <tr><th scope="row">Mode / status</th><td>@S.Mode / @S.Status</td></tr>
+    <tr><th scope="row">Outcomes</th><td>@string.Join(", ", S.Outcomes.Select(o => $"{o.Outcome} {o.Count}"))</td></tr>
+    <tr><th scope="row">Pass rate</th><td><PassBar Value="S.PassRate" /> (@S.Passed/@S.Graded graded)</td></tr>
+    <tr><th scope="row">Mean score</th><td>@Fmt.Score(S.MeanScore)</td></tr>
+    <tr><th scope="row">Excluded</th><td>infra errors @S.InfraErrors, timeouts @S.Timeouts, cancelled @S.Cancelled</td></tr>
+    <tr><th scope="row">Consistency</th><td>@Fmt.Pct(S.Consistency) <span class="muted">(tasks with identical pass/fail on every repeat; needs 2+ graded repeats)</span></td></tr>
+    <tr><th scope="row">Cost per success</th><td>@Fmt.Num(S.CostPerSuccess) <span class="muted">(total cost / passes; cost coverage @S.Metric(MetricNames.CostUsd).Coverage)</span></td></tr>
+</table>
+
+<h2>Metrics</h2>
+<table>
+    <tr><th>Metric</th><th class="num">Total</th><th class="num">Mean</th><th class="num">Median</th><th>Coverage</th><th>Provenance</th></tr>
+    @foreach (var (name, prov) in Names)
+    {
+        var a = S.Metric(name);
+        <tr><td>@name</td><td class="num">@Fmt.Num(a.Total)</td><td class="num">@Fmt.Num(a.Mean)</td><td class="num">@Fmt.Num(a.Median)</td><td>@a.Coverage</td><td>@prov</td></tr>
+    }
+</table>
+
+<h2>Breakdowns</h2>
+@foreach (var (title, slices) in new[] { ("Category", S.ByCategory), ("Complexity", S.ByComplexity), ("Family", S.ByFamily) })
+{
+    <table>
+        <tr><th>@title</th><th class="num">Graded</th><th class="num">Passed</th><th>Pass rate</th><th class="num">Mean score</th></tr>
+        @foreach (var g in slices)
+        {
+            <tr><td>@g.Key</td><td class="num">@g.N</td><td class="num">@g.Passed</td><td><PassBar Value="g.PassRate" /></td><td class="num">@Fmt.Score(g.MeanScore)</td></tr>
+        }
+    </table>
+}
+
+@code {
+    [Parameter, EditorRequired] public RunSummary S { get; set; } = null!;
+
+    private static readonly (string, string)[] Names =
+    [
+        (MetricNames.InputTokens, "Measured"), (MetricNames.OutputTokens, "Measured"), (MetricNames.ReasoningTokens, "Measured"),
+        (MetricNames.TimeToFirstTokenMs, "Measured"), (MetricNames.ThroughputTps, "Calculated"), (MetricNames.DurationMs, "Measured"),
+        (MetricNames.CostUsd, "Calculated"), (MetricNames.EnergyKwh, "Estimated"), (MetricNames.EnergyCostUsd, "Estimated"),
+    ];
+}

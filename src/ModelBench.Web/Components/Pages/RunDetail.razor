@@ -1,0 +1,77 @@
+@page "/runs/{Id:guid}"
+@using Microsoft.EntityFrameworkCore
+@inject Func<BenchDb> Open
+
+<PageTitle>Run</PageTitle>
+@if (summary is null)
+{
+    <h1>Run not found</h1>
+}
+else
+{
+    <h1>Run @Fmt.Short(Id)@(summary.Label is { Length: > 0 } l ? " (" + l + ")" : "")</h1>
+    <p>
+        Export: <a href="/export/runs/@(Id).json" download>JSON</a>
+        @foreach (var t in Export.Tables) { <span> | </span><a href="/export/runs/@Id/@(t).csv" download>@(t).csv</a> }
+    </p>
+
+    <RunProgress RunId="Id" @rendermode="InteractiveServer" />
+
+    <SummaryView S="summary" />
+
+    <h2>Attempts</h2>
+    <div class="scroll">
+    <table>
+        <tr><th>Task</th><th>Family</th><th class="num">Cx</th><th class="num">Repeat</th><th>Outcome</th><th class="num">Score</th><th class="num">TTFT ms</th><th class="num">In tok</th><th class="num">Out tok</th><th class="num">Cost USD</th></tr>
+        @foreach (var a in attempts)
+        {
+            <tr class="@(a.Outcome == AttemptOutcome.Passed ? "" : "fail")">
+                <td><a href="/attempts/@a.Id">@a.Task!.Index</a></td><td>@a.Task.FamilyId</td><td class="num">@a.Task.Complexity</td><td class="num">@a.RepeatIndex</td>
+                <td>@a.Outcome</td><td class="num">@Fmt.Score(a.Score)</td>
+                <td class="num">@Fmt.Num(M(a, MetricNames.TimeToFirstTokenMs))</td><td class="num">@Fmt.Num(M(a, MetricNames.InputTokens))</td>
+                <td class="num">@Fmt.Num(M(a, MetricNames.OutputTokens))</td><td class="num">@Fmt.Num(M(a, MetricNames.CostUsd))</td>
+            </tr>
+        }
+    </table>
+    </div>
+
+    <h2>Failures</h2>
+    @if (failures.Count == 0) { <p>No failed attempts.</p> }
+    @foreach (var f in failures)
+    {
+        <h3><a href="/attempts/@f.AttemptId">Task @f.TaskIndex @f.FamilyId, repeat @f.Repeat</a>: @f.Outcome</h3>
+        @if (f.Error is not null) { <p class="error">@f.Error</p> }
+        @if (f.Assertions.Count > 0)
+        {
+            <div class="scroll">
+            <table>
+                <tr><th>Grader</th><th>Name</th><th>Expected</th><th>Actual</th><th>Diagnostic</th><th class="num">Weight</th><th>Required</th></tr>
+                @foreach (var x in f.Assertions)
+                {
+                    <tr><td>@x.Grader</td><td>@x.Name</td><td>@x.Expected</td><td>@x.Actual</td><td>@x.Diagnostic</td><td class="num">@x.Weight</td><td>@(x.Required ? "yes" : "no")</td></tr>
+                }
+            </table>
+            </div>
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private RunSummary? summary;
+    private List<Attempt> attempts = [];
+    private List<FailedAttempt> failures = [];
+
+    protected override void OnInitialized()
+    {
+        using var db = Open();
+        if (!db.Runs.Any(r => r.Id == Id)) return;
+        summary = Reports.Summarize(db, Id);
+        failures = Reports.Failures(db, Id);
+        attempts = db.Attempts.AsNoTracking().Include(a => a.Task).Include(a => a.Metrics).Where(a => a.RunId == Id).ToList()
+            .OrderBy(a => a.Task!.Index).ThenBy(a => a.RepeatIndex).ToList();
+    }
+
+    private static double? M(Attempt a, string name) => a.Metrics.FirstOrDefault(m => m.Name == name)?.Value;
+}

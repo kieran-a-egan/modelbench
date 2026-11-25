@@ -1,0 +1,118 @@
+@page "/suites"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using ModelBench.Core.Families
+@using ModelBench.Core.Generation
+@inject Func<BenchDb> Open
+
+<PageTitle>Suites</PageTitle>
+<h1>Suites</h1>
+
+<div class="scroll">
+<table>
+    <tr><th>Name</th><th class="num">Seed</th><th>Hash</th><th class="num">Tasks</th><th>Created</th><th></th></tr>
+    @foreach (var s in suites)
+    {
+        <tr>
+            <td><a href="/suites/@s.Id">@s.Name</a></td><td class="num">@s.MasterSeed</td><td><code>@s.ContentHash[..12]</code></td>
+            <td class="num">@s.Tasks</td><td>@Fmt.Date(s.CreatedAt)</td>
+            <td><button type="button" @onclick="() => VerifyAsync(s.Id, s.Name)">Verify</button></td>
+        </tr>
+    }
+</table>
+</div>
+@if (verifyResult is not null)
+{
+    <section aria-live="polite"><h2>Verify result</h2>
+        <ul>@foreach (var line in verifyResult) { <li>@line</li> }</ul>
+    </section>
+}
+
+<h2>Generate a suite</h2>
+<form class="stack" @onsubmit="GenerateAsync">
+    <label>Name <input @bind="name" required /></label>
+    <label>Master seed <input type="number" @bind="seed" /></label>
+    <fieldset>
+        <legend>Families</legend>
+        <div class="checks">
+            @foreach (var f in FamilyRegistry.All)
+            {
+                var id = f.Id;
+                <label><input type="checkbox" checked="@selected.Contains(id)" @onchange="e => Toggle(id, (bool)e.Value!)" /> @id</label>
+            }
+        </div>
+    </fieldset>
+    <label>Complexity from <input type="number" min="1" max="5" @bind="cMin" /></label>
+    <label>Complexity to <input type="number" min="1" max="5" @bind="cMax" /></label>
+    <label>Tasks per family and complexity <input type="number" min="1" @bind="count" /></label>
+    <div><button type="submit" disabled="@busy">@(busy ? "Generating..." : "Generate")</button></div>
+</form>
+@if (error is not null)
+{
+    <p class="error" role="alert">@error</p>
+}
+
+@code {
+    private sealed record Row(Guid Id, string Name, long MasterSeed, string ContentHash, DateTimeOffset CreatedAt, int Tasks);
+
+    private List<Row> suites = [];
+    private readonly HashSet<string> selected = [];
+    private string name = "";
+    private long seed = 1;
+    private int cMin = 1, cMax = 3, count = 5;
+    private bool busy;
+    private string? error;
+    private List<string>? verifyResult;
+
+    protected override void OnInitialized() => Load();
+
+    private void Load()
+    {
+        using var db = Open();
+        suites = db.Suites.AsNoTracking().Select(s => new Row(s.Id, s.Name, s.MasterSeed, s.ContentHash, s.CreatedAt, s.Tasks.Count)).ToList()
+            .OrderByDescending(s => s.CreatedAt).ToList();
+    }
+
+    private void Toggle(string id, bool on) { if (on) selected.Add(id); else selected.Remove(id); }
+
+    private async Task GenerateAsync()
+    {
+        error = null;
+        busy = true;
+        try
+        {
+            if (selected.Count == 0) throw new ArgumentException("select at least one family");
+            if (cMin > cMax) throw new ArgumentException("complexity range is empty");
+            // Static and repo families carry their own complexity, so they get a single entry.
+            var families = FamilyRegistry.All.Select(f => f.Id).Where(selected.Contains).SelectMany(f =>
+                f.StartsWith("static:") || f.StartsWith("repo:") ? [new FamilySpec(f, cMin, count)]
+                : Enumerable.Range(cMin, cMax - cMin + 1).Select(c => new FamilySpec(f, c, count))).ToList();
+            var spec = new SuiteSpec(name, seed, families);
+            await Task.Run(() =>
+            {
+                var suite = SuiteGenerator.Generate(spec);
+                using var db = Open();
+                SuiteGenerator.Persist(db, suite);
+            });
+            Load();
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or ModelBench.Core.Grading.InfraException)
+        {
+            error = ex.Message;
+        }
+        finally { busy = false; }
+    }
+
+    private async Task VerifyAsync(Guid id, string suiteName)
+    {
+        try
+        {
+            var problems = await Task.Run(() => { using var db = Open(); return SuiteGenerator.Verify(db, id); });
+            verifyResult = problems.Count == 0 ? [$"{suiteName}: verified, every task and suite hash regenerates identically"] : problems;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or ModelBench.Core.Grading.InfraException)
+        {
+            verifyResult = [$"{suiteName}: {ex.Message}"];
+        }
+    }
+}

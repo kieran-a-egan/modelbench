@@ -1,0 +1,79 @@
+@page "/compare"
+@using Microsoft.EntityFrameworkCore
+@inject Func<BenchDb> Open
+
+<PageTitle>Compare</PageTitle>
+<h1>Compare runs</h1>
+<p class="muted">Both runs must use the same suite content hash. Choose run A and press Compare to narrow the run B list to matching runs.</p>
+
+<form method="get" action="/compare" class="stack">
+    <label>Run A
+        <select name="a">
+            <option value="">(choose)</option>
+            @foreach (var r in runs) { <option value="@r.Id" selected="@(r.Id == A)">@Label(r)</option> }
+        </select>
+    </label>
+    <label>Run B
+        <select name="b">
+            <option value="">(choose)</option>
+            @foreach (var r in runs.Where(r => A is null || (r.Id != A && r.Suite!.ContentHash == hashA))) { <option value="@r.Id" selected="@(r.Id == B)">@Label(r)</option> }
+        </select>
+    </label>
+    <div><button type="submit">Compare</button></div>
+</form>
+
+@if (error is not null) { <p class="error" role="alert">@error</p> }
+@if (cmp is not null)
+{
+    <h2>Summary</h2>
+    <table>
+        <tr><th></th><th>A</th><th>B</th><th class="num">Delta</th></tr>
+        <tr><th scope="row">Run</th><td><a href="/runs/@cmp.A.RunId">@Fmt.Short(cmp.A.RunId)</a> @cmp.A.ModelRef</td><td><a href="/runs/@cmp.B.RunId">@Fmt.Short(cmp.B.RunId)</a> @cmp.B.ModelRef</td><td></td></tr>
+        <tr><th scope="row">Pass rate</th><td><PassBar Value="cmp.A.PassRate" /></td><td><PassBar Value="cmp.B.PassRate" /></td><td class="num">@Fmt.Delta(cmp.PassRateDelta)</td></tr>
+        <tr><th scope="row">Mean score</th><td>@Fmt.Score(cmp.A.MeanScore)</td><td>@Fmt.Score(cmp.B.MeanScore)</td><td class="num">@Fmt.Delta(cmp.MeanScoreDelta)</td></tr>
+        @foreach (var m in cmp.Metrics)
+        {
+            <tr><th scope="row">@m.Name</th><td class="num">@Fmt.Num(m.A)</td><td class="num">@Fmt.Num(m.B)</td><td class="num">@Fmt.Delta(m.Delta)</td></tr>
+        }
+    </table>
+    <p>@string.Join(", ", Enum.GetValues<TaskChange>().Select(c => $"{c} {cmp.Count(c)}"))</p>
+
+    <h2>Per task</h2>
+    <div class="scroll">
+    <table>
+        <tr><th class="num">Task</th><th>Family</th><th class="num">Cx</th><th>Change</th><th class="num">Score A</th><th class="num">Score B</th><th class="num">Delta</th></tr>
+        @foreach (var t in cmp.Tasks)
+        {
+            <tr class="@(t.Change == TaskChange.PassToFail ? "fail" : "")">
+                <td class="num">@t.Index</td><td>@t.FamilyId</td><td class="num">@t.Complexity</td><td>@t.Change</td>
+                <td class="num">@Fmt.Score(t.ScoreA)</td><td class="num">@Fmt.Score(t.ScoreB)</td><td class="num">@Fmt.Delta(t.ScoreDelta)</td>
+            </tr>
+        }
+    </table>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery] public Guid? A { get; set; }
+    [SupplyParameterFromQuery] public Guid? B { get; set; }
+
+    private List<Run> runs = [];
+    private string? hashA, error;
+    private Comparison? cmp;
+
+    private static string Label(Run r) => $"{Fmt.Short(r.Id)} {r.ModelRef} on {r.Suite!.Name} ({Fmt.Date(r.CreatedAt)}){(r.Label is { Length: > 0 } l ? " " + l : "")}";
+
+    protected override void OnParametersSet()
+    {
+        using var db = Open();
+        runs = db.Runs.AsNoTracking().Include(r => r.Suite).Where(r => r.Status == RunStatus.Completed).ToList().OrderByDescending(r => r.CreatedAt).ToList();
+        hashA = runs.FirstOrDefault(r => r.Id == A)?.Suite!.ContentHash;
+        cmp = null;
+        error = null;
+        if (A is { } a && B is { } b)
+        {
+            try { cmp = Reports.Compare(db, a, b); }
+            catch (InvalidOperationException ex) { error = ex.Message; }
+        }
+    }
+}

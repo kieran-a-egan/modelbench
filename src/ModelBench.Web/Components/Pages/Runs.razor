@@ -1,0 +1,131 @@
+@page "/runs"
+@rendermode InteractiveServer
+@implements IDisposable
+@using Microsoft.EntityFrameworkCore
+@using ModelBench.Core.Config
+@using ModelBench.Core.Execution
+@inject Func<BenchDb> Open
+@inject ModelsFile Models
+@inject RunHostService Host
+@inject NavigationManager Nav
+
+<PageTitle>Runs</PageTitle>
+<h1>Runs</h1>
+
+<div class="scroll">
+<table>
+    <tr><th>Run</th><th>Label</th><th>Model</th><th>Suite</th><th>Mode</th><th>Status</th><th class="num">Attempts</th><th>Created</th><th></th></tr>
+    @foreach (var r in runs)
+    {
+        <tr>
+            <td><a href="/runs/@r.Id">@Fmt.Short(r.Id)</a></td><td>@r.Label</td><td>@r.ModelRef</td><td>@r.SuiteName</td><td>@r.Mode</td><td>@r.Status</td>
+            <td class="num">@r.Attempts</td><td>@Fmt.Date(r.CreatedAt)</td>
+            <td>@if (r.Status is RunStatus.Pending or RunStatus.Running) { <button type="button" @onclick="() => Host.Cancel(r.Id)">Cancel</button> }</td>
+        </tr>
+    }
+</table>
+</div>
+
+<h2>Start a run</h2>
+@if (entries.Count == 0 || suites.Count == 0)
+{
+    <p class="muted">Needs at least one model in models.json (@entries.Count found) and one suite (@suites.Count found).</p>
+}
+else
+{
+    <form class="stack" @onsubmit="StartAsync">
+        <label>Suite <select @bind="suiteId">@foreach (var s in suites) { <option value="@s.Id">@s.Name (@s.ContentHash[..8])</option> }</select></label>
+        <label>Model <select @bind="modelRef">@foreach (var e in entries) { <option value="@e.Ref">@e.Ref</option> }</select></label>
+        <label>Variant
+            <select @bind="variant">
+                <option value="">(none)</option>
+                @foreach (var v in entries.FirstOrDefault(e => e.Ref == modelRef)?.Variants ?? []) { <option value="@v">@v</option> }
+            </select>
+        </label>
+        <label>Mode <select @bind="mode">@foreach (var m in new[] { ExecutionMode.SingleTurn, ExecutionMode.ToolAssisted, ExecutionMode.Agentic }) { <option value="@m">@m</option> }</select></label>
+        <label>Repeats <input type="number" min="1" @bind="repeats" /></label>
+        <label>Timeout per attempt (seconds) <input type="number" min="1" @bind="timeout" /></label>
+        <label>Label <input @bind="label" /></label>
+        <div><button type="submit" disabled="@busy">Start run</button></div>
+    </form>
+}
+@if (error is not null)
+{
+    <p class="error" role="alert">@error</p>
+}
+
+@code {
+    private sealed record Row(Guid Id, string? Label, string ModelRef, string SuiteName, ExecutionMode Mode, RunStatus Status, int Attempts, DateTimeOffset CreatedAt);
+
+    private readonly CancellationTokenSource cts = new();
+    private List<Row> runs = [];
+    private List<Suite> suites = [];
+    private IReadOnlyList<CatalogEntry> entries = [];
+    private Guid suiteId;
+    private string modelRef = "", variant = "", label = "";
+    private ExecutionMode mode = ExecutionMode.SingleTurn;
+    private int repeats = 1, timeout = 300;
+    private bool busy;
+    private string? error;
+
+    protected override void OnInitialized()
+    {
+        try { entries = Models.Exists ? Models.Catalog().List() : []; }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException) { error = "models.json: " + ex.Message; }
+        modelRef = entries.FirstOrDefault()?.Ref ?? "";
+        Load();
+        suiteId = suites.FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) _ = Poll();
+    }
+
+    private void Load()
+    {
+        using var db = Open();
+        runs = db.Runs.AsNoTracking().Select(r => new Row(r.Id, r.Label, r.ModelRef, r.Suite!.Name, r.Mode, r.Status, r.Attempts.Count, r.CreatedAt)).ToList()
+            .OrderByDescending(r => r.CreatedAt).ToList();
+        suites = db.Suites.AsNoTracking().Select(s => new Suite { Id = s.Id, Name = s.Name, ContentHash = s.ContentHash, SpecJson = "", CreatedAt = s.CreatedAt }).ToList()
+            .OrderByDescending(s => s.CreatedAt).ToList();
+    }
+
+    private async Task Poll()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cts.Token))
+            {
+                Load();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task StartAsync()
+    {
+        error = null;
+        busy = true;
+        try
+        {
+            var model = Models.Catalog().Resolve(modelRef + (variant.Length > 0 ? "@" + variant : ""));
+            var run = await Task.Run(() =>
+            {
+                using var db = Open();
+                return RunService.CreateRun(db, suiteId, model, mode, repeats, timeout, new RetryPolicy(), string.IsNullOrWhiteSpace(label) ? null : label.Trim());
+            });
+            Host.Enqueue(run.Id, model);
+            Nav.NavigateTo($"/runs/{run.Id}");
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException)
+        {
+            error = ex.Message;
+        }
+        finally { busy = false; }
+    }
+
+    public void Dispose() => cts.Cancel();
+}

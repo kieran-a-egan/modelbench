@@ -14,6 +14,7 @@ public static class CliApp
         root.Subcommands.Add(ModelsCommands.Build(cli));
         root.Subcommands.Add(SuiteCommands.Build(cli));
         root.Subcommands.Add(RunCommands.Build(cli));
+        foreach (var c in ReportCommands.Build(cli)) root.Subcommands.Add(c);
         root.Subcommands.Add(ManualCommands.Build(cli));
         root.Subcommands.Add(SelfTestCommand.Build(cli));
         root.Subcommands.Add(SandboxCommands.Build());

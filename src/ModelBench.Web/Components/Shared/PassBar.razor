@@ -1,0 +1,12 @@
+@if (Value is { } v)
+{
+    <span class="bar" role="img" aria-label="@Fmt.Pct(v)"><span class="fill" style="width:@(Fmt.Width(v))%"></span></span><span>@Fmt.Pct(v)</span>
+}
+else
+{
+    <span>-</span>
+}
+
+@code {
+    [Parameter] public double? Value { get; set; }
+}
