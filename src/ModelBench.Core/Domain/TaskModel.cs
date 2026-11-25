@@ -49,7 +49,10 @@ public sealed record ChatMessage(
     string? Content,
     IReadOnlyList<ToolCall>? ToolCalls = null,
     string? ToolCallId = null,
-    string? ToolName = null);
+    string? ToolName = null,
+    /// <summary>Provider-native assistant content (raw JSON) replayed verbatim on the next request to the SAME api kind
+    /// (Anthropic content blocks, Gemini parts, OpenAI Responses output items). Model output only; never contains secrets.</summary>
+    string? ProviderState = null);
 
 public sealed record ToolCall(string Id, string Name, string ArgumentsJson);
 

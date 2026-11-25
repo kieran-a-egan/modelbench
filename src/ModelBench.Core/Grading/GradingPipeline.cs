@@ -23,7 +23,7 @@ public static class GradingPipeline
         TaskPrompt prompt, TaskHidden hidden, IReadOnlyList<ChatMessage> transcript,
         JsonElement? finalEnvState, ISandbox sandbox, CancellationToken ct)
     {
-        var raw = transcript.LastOrDefault(m => m.Role == Role.Assistant)?.Content;
+        var raw = transcript.LastOrDefault(m => m.Role == Role.Assistant && !string.IsNullOrEmpty(m.Content))?.Content;
         var finalText = raw is null ? null : AnswerExtractor.StripReasoning(raw);
         var answer = AnswerExtractor.Extract(finalText, prompt.AnswerFormat);
         var ctx = new GradingContext(prompt, hidden, finalText, answer, transcript, finalEnvState, sandbox, ct);
@@ -39,6 +39,9 @@ public static class GradingPipeline
                 Diagnostic = answer is null ? $"no {prompt.AnswerFormat} answer found in the final text" : null,
             },
         };
+        // A tool loop that ended on pending tool calls hit its step limit. Informational only.
+        if (prompt.Tools.Count > 0 && transcript is [.., { Role: Role.Assistant, ToolCalls.Count: > 0 }])
+            results.Add(new AssertionResult { Grader = "step-limit", Name = "step-limit", Required = false, Weight = 0, Passed = false, Score = 0, Diagnostic = "the model was still calling tools when the step limit was reached" });
         foreach (var spec in hidden.Graders)
         {
             foreach (var o in await GraderRegistry.Get(spec.Type).GradeAsync(spec, ctx))
