@@ -126,7 +126,7 @@ Grader type ids (`GraderSpec.Type`) and their `Config`:
 | Type | Config | Assertions |
 |---|---|---|
 | `exact` | `{ expected: string, normalize?: "none"\|"trim"\|"whitespace"\|"casefold" }` | one |
-| `structural` | `{ expected: json, unorderedArrays?: bool }` | one per mismatching JSON path (or a single pass) |
+| `structural` | `{ expected: json, unorderedArrays?: bool, key?: string }` (key = compare only that top-level property of the answer object) | one per mismatching JSON path (or a single pass) |
 | `numeric` | `{ expected: "p/q" or number string, absTol?: number, relTol?: number }` | one |
 | `json-schema` | `{ schema: json }` | one per schema error (or a single pass) |
 | `text-constraints` | `{ constraints: [{ kind, ... }] }`, where kind is one of: word-count, max-words, contains, not-contains, regex, line-count, starts-with, ends-with, all-lowercase, no-letter, json-keys, bullet-count | one per constraint |
