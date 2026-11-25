@@ -1,0 +1,78 @@
+{
+  "providers": {
+    "strata": {
+      "name": "Strata Desktop (local)",
+      "api": "openai-completions",
+      "baseUrl": "http://127.0.0.1:47831/v1",
+      "apiKey": "none",
+      "energy": { "watts": 350, "pricePerKwh": 0.30 },
+      "models": [
+        {
+          "id": "inkling-2-mini-sq-15",
+          "name": "Inkling 2 Mini SQ-15",
+          "reasoning": true,
+          "toolCalls": true,
+          "contextWindow": 262144,
+          "maxTokens": 16384,
+          "cost": { "input": 0, "output": 0 },
+          "samplingParams": { "temperature": 1.0 },
+          "variants": {
+            "none": { "reasoningEffort": "none" },
+            "low": { "reasoningEffort": "low" },
+            "high": { "reasoningEffort": "high" }
+          },
+          "compat": { "maxTokensField": "max_tokens", "supportsReasoningEffort": true }
+        }
+      ]
+    },
+    "openai": {
+      "api": "openai-responses",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "{env:OPENAI_API_KEY}",
+      "models": [
+        {
+          "id": "gpt-5.2",
+          "reasoning": true,
+          "toolCalls": true,
+          "maxTokens": 32000,
+          "cost": { "input": 1.25, "output": 10.0 },
+          "variants": { "low": { "reasoningEffort": "low" }, "high": { "reasoningEffort": "high" } }
+        }
+      ]
+    },
+    "anthropic": {
+      "api": "anthropic-messages",
+      "baseUrl": "https://api.anthropic.com",
+      "apiKey": "{env:ANTHROPIC_API_KEY}",
+      "models": [
+        {
+          "id": "claude-sonnet-5-5",
+          "reasoning": true,
+          "toolCalls": true,
+          "maxTokens": 32000,
+          "cost": { "input": 3.0, "output": 15.0 },
+          "variants": { "think8k": { "thinkingBudget": 8192 } }
+        }
+      ]
+    },
+    "google": {
+      "api": "google-generative-ai",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKey": "{env:GEMINI_API_KEY}",
+      "models": [
+        {
+          "id": "gemini-3-pro",
+          "reasoning": true,
+          "toolCalls": true,
+          "maxTokens": 32000,
+          "cost": { "input": 1.25, "output": 10.0 },
+          "variants": { "think8k": { "thinkingBudget": 8192 } }
+        }
+      ]
+    },
+    "manual": {
+      "api": "manual",
+      "models": [ { "id": "chat-ui", "name": "Responses pasted from a chat UI" } ]
+    }
+  }
+}
