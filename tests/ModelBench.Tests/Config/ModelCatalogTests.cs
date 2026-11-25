@@ -36,15 +36,21 @@ public class ModelCatalogTests
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (!File.Exists(Path.Combine(dir.FullName, "models.example.json"))) dir = dir.Parent ?? throw new FileNotFoundException("models.example.json");
-        foreach (var v in new[] { "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY" }) Environment.SetEnvironmentVariable(v, "test-key");
-        var cat = ModelCatalog.Parse(File.ReadAllText(Path.Combine(dir.FullName, "models.example.json")));
-        Assert.Equal(5, cat.List().Count);
-        var strata = cat.Resolve("strata/inkling-2-mini-sq-15@high");
-        Assert.Equal("high", strata.VariantSettings["reasoningEffort"]!.GetValue<string>());
-        Assert.Equal(new EnergyProfile(350, 0.30m), strata.Energy);
-        Assert.Equal(ApiKind.Manual, cat.Resolve("manual/chat-ui").Api);
-        Assert.Equal(8192, cat.Resolve("anthropic/claude-sonnet-5-5@think8k").VariantSettings["thinkingBudget"]!.GetValue<int>());
-        Assert.Equal(new Pricing(1.25m, 10.0m), cat.Resolve("openai/gpt-5.2").Pricing);
+        string[] vars = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"];
+        var saved = vars.Select(Environment.GetEnvironmentVariable).ToArray();
+        foreach (var v in vars) Environment.SetEnvironmentVariable(v, "test-key");
+        try
+        {
+            var cat = ModelCatalog.Parse(File.ReadAllText(Path.Combine(dir.FullName, "models.example.json")));
+            Assert.Equal(5, cat.List().Count);
+            var strata = cat.Resolve("strata/inkling-2-mini-sq-15@high");
+            Assert.Equal("high", strata.VariantSettings["reasoningEffort"]!.GetValue<string>());
+            Assert.Equal(new EnergyProfile(350, 0.30m), strata.Energy);
+            Assert.Equal(ApiKind.Manual, cat.Resolve("manual/chat-ui").Api);
+            Assert.Equal(8192, cat.Resolve("anthropic/claude-sonnet-5-5@think8k").VariantSettings["thinkingBudget"]!.GetValue<int>());
+            Assert.Equal(new Pricing(1.25m, 10.0m), cat.Resolve("openai/gpt-5.2").Pricing);
+        }
+        finally { for (var i = 0; i < vars.Length; i++) Environment.SetEnvironmentVariable(vars[i], saved[i]); } // don't leak fake keys into the live smoke tests
     }
 
     [Fact] public void EnvSubstitutionInKeysAndHeaders()

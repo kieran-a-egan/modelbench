@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using ModelBench.Core.Config;
 using ModelBench.Core.Domain;
+using ModelBench.Core.Families;
 using ModelBench.Core.Grading;
 using ModelBench.Core.Metrics;
 using ModelBench.Core.Persistence;
@@ -22,7 +23,6 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
     {
         var run = await db.Runs.SingleAsync(r => r.Id == runId, CancellationToken.None);
         if (run.Mode == ExecutionMode.Manual) throw new InvalidOperationException("manual runs are completed with 'manual import'");
-        if (run.Mode != ExecutionMode.SingleTurn) throw new NotSupportedException($"{run.Mode} execution is not implemented yet");
         var policy = JsonUtil.Deserialize<RetryPolicy>(run.RetryPolicyJson);
 
         var tasks = await db.Tasks.Where(t => t.SuiteId == run.SuiteId && t.Mode == run.Mode).OrderBy(t => t.Index).ToListAsync(CancellationToken.None);
@@ -74,13 +74,13 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         {
             while (true)
             {
-                try { episode = await EpisodeRunner.RunSingleTurnAsync(prompt, provider, cts.Token); break; }
+                try { episode = await EpisodeRunner.RunAsync(run.Mode, prompt, hidden, FamilyRegistry.Get(task.FamilyId), provider, cts.Token); break; }
                 catch (InfraException ex) when (ex.Retryable && attempt.Retries < policy.MaxRetries)
                 {
                     await Task.Delay(policy.Delay(attempt.Retries++), cts.Token);
                 }
             }
-            var graded = await GradingPipeline.GradeAsync(prompt, hidden, episode.Transcript, null, sandbox, cts.Token);
+            var graded = await GradingPipeline.GradeAsync(prompt, hidden, episode.Transcript, episode.FinalEnvironmentState, sandbox, cts.Token);
             graded.ApplyTo(attempt);
             attempt.TranscriptJson = JsonUtil.Serialize(episode.Transcript);
             attempt.RawRequestsJson = JsonUtil.Serialize(episode.Responses.Select(r => r.RawRequest));

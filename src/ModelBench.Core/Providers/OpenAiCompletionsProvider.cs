@@ -12,36 +12,14 @@ namespace ModelBench.Core.Providers;
 /// <summary>OpenAI-compatible streaming /chat/completions adapter.</summary>
 public sealed class OpenAiCompletionsProvider(ResolvedModel model, HttpClient? http = null) : IModelProvider
 {
-    private readonly HttpClient _http = http ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly HttpClient _http = http ?? ProviderHttp.NewClient();
 
-    public async Task<ModelResponse> CompleteAsync(ModelRequest request, CancellationToken ct)
+    public Task<ModelResponse> CompleteAsync(ModelRequest request, CancellationToken ct)
     {
         var body = BuildBody(request).ToJsonString();
-        using var msg = new HttpRequestMessage(HttpMethod.Post, (model.BaseUrl ?? throw new InvalidOperationException($"{model.Ref} has no baseUrl")).TrimEnd('/') + "/chat/completions")
-        {
-            Content = new StringContent(body, Encoding.UTF8, "application/json"),
-        };
+        var msg = ProviderHttp.Post(ProviderHttp.BaseUrl(model) + "/chat/completions", body, model);
         if (model.ApiKey is { Length: > 0 } key && key != "none") msg.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-        foreach (var (k, v) in model.Headers) msg.Headers.TryAddWithoutValidation(k, v);
-
-        var started = DateTimeOffset.UtcNow;
-        var sw = Stopwatch.StartNew();
-        try
-        {
-            using var resp = await _http.SendAsync(msg, HttpCompletionOption.ResponseHeadersRead, ct);
-            if (!resp.IsSuccessStatusCode)
-            {
-                var err = await resp.Content.ReadAsStringAsync(ct);
-                var code = (int)resp.StatusCode;
-                throw new InfraException($"HTTP {code}: {(err.Length > 500 ? err[..500] : err)}",
-                    retryable: code is 408 or 429 or >= 500);
-            }
-            return await ParseAsync(await resp.Content.ReadAsStreamAsync(ct), body, started, sw, ct);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException)
-        {
-            throw new InfraException($"transport error: {ex.Message}", retryable: true, inner: ex);
-        }
+        return ProviderHttp.SendAsync(_http, msg, body, (s, b, started, sw) => ParseAsync(s, b, started, sw, ct), ct);
     }
 
     private static async Task<ModelResponse> ParseAsync(Stream stream, string rawRequest, DateTimeOffset started, Stopwatch sw, CancellationToken ct)

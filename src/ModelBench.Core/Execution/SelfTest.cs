@@ -32,7 +32,6 @@ public static class SelfTest
         var skipped = 0;
         foreach (var fam in families)
         {
-            if (fam.Mode != ExecutionMode.SingleTurn) throw new NotSupportedException($"selftest of {fam.Mode} family '{fam.Id}' is not implemented yet");
             for (var c = Complexity.Min; c <= Complexity.Max; c++)
                 for (var i = 0; i < samplesPerComplexity; i++)
                 {
@@ -43,14 +42,14 @@ public static class SelfTest
                     if (!v.Ok) Fail("validate", string.Join("; ", v.Problems));
                     if (task.ReferenceTurns.Count == 0) { skipped++; continue; } // file-defined task without a reference answer
 
-                    var reference = await GradeAsync(task, task.ReferenceTurns, sandbox, ct);
+                    var reference = await GradeAsync(fam, task, task.ReferenceTurns, sandbox, ct);
                     checks++;
                     if (reference.Score != 1.0 || !reference.Passed)
                         Fail("reference", $"score {reference.Score}, passed {reference.Passed}: {Describe(reference)}");
 
                     for (var b = 0; b < task.KnownBadTurns.Count; b++)
                     {
-                        var bad = await GradeAsync(task, task.KnownBadTurns[b], sandbox, ct);
+                        var bad = await GradeAsync(fam, task, task.KnownBadTurns[b], sandbox, ct);
                         checks++;
                         if (bad.Passed) Fail($"known-bad[{b}]", "a known-bad answer passed");
                     }
@@ -59,10 +58,10 @@ public static class SelfTest
         return new SelfTestReport(checks, failures, skipped);
     }
 
-    private static async Task<GradingResult> GradeAsync(GeneratedTask task, IReadOnlyList<ChatMessage> turns, ISandbox sandbox, CancellationToken ct)
+    private static async Task<GradingResult> GradeAsync(IBenchmarkFamily fam, GeneratedTask task, IReadOnlyList<ChatMessage> turns, ISandbox sandbox, CancellationToken ct)
     {
-        var episode = await EpisodeRunner.RunSingleTurnAsync(task.Prompt, new ScriptedProvider(turns), ct);
-        return await GradingPipeline.GradeAsync(task.Prompt, task.Hidden, episode.Transcript, null, sandbox, ct);
+        var episode = await EpisodeRunner.RunAsync(fam.Mode, task.Prompt, task.Hidden, fam, new ScriptedProvider(turns), ct);
+        return await GradingPipeline.GradeAsync(task.Prompt, task.Hidden, episode.Transcript, episode.FinalEnvironmentState, sandbox, ct);
     }
 
     private static string Describe(GradingResult r)

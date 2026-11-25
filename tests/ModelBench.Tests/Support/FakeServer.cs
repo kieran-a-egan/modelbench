@@ -36,30 +36,33 @@ public sealed class FakeServer : IAsyncDisposable
     private readonly WebApplication _app;
     private readonly List<string> _bodies = [];
     private readonly List<string?> _auth = [];
+    private readonly List<IReadOnlyDictionary<string, string>> _headers = [];
     private int _calls;
 
     public string BaseUrl { get; }
 
     public IReadOnlyList<string> Bodies { get { lock (_bodies) return _bodies.ToList(); } }
     public IReadOnlyList<string?> AuthHeaders { get { lock (_bodies) return _auth.ToList(); } }
+    /// <summary>All request headers of every call (lower-cased names).</summary>
+    public IReadOnlyList<IReadOnlyDictionary<string, string>> Headers { get { lock (_bodies) return _headers.ToList(); } }
     public int Calls => _calls;
 
     private FakeServer(WebApplication app, string baseUrl) { _app = app; BaseUrl = baseUrl; }
 
     /// <param name="handler">(zero-based call index, parsed request body) -> reply</param>
-    public static async Task<FakeServer> StartAsync(Func<int, JsonObject, FakeReply> handler)
+    public static async Task<FakeServer> StartAsync(Func<int, JsonObject, FakeReply> handler, string path = "/v1/chat/completions", bool sendDone = true)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         var app = builder.Build();
         FakeServer? server = null;
-        app.MapPost("/v1/chat/completions", async (HttpContext ctx) =>
+        app.MapPost(path, async (HttpContext ctx) =>
         {
             using var reader = new StreamReader(ctx.Request.Body);
             var raw = await reader.ReadToEndAsync();
             int index;
-            lock (server!._bodies) { server._bodies.Add(raw); server._auth.Add(ctx.Request.Headers.Authorization.FirstOrDefault()); index = server._calls++; }
+            lock (server!._bodies) { server._bodies.Add(raw); server._auth.Add(ctx.Request.Headers.Authorization.FirstOrDefault()); server._headers.Add(ctx.Request.Headers.ToDictionary(h => h.Key.ToLowerInvariant(), h => h.Value.ToString())); index = server._calls++; }
             var reply = handler(index, JsonNode.Parse(raw)!.AsObject());
             ctx.Response.StatusCode = reply.Status;
             if (reply.Chunks is null) { await ctx.Response.WriteAsync(reply.Body); return; }
@@ -70,7 +73,7 @@ public sealed class FakeServer : IAsyncDisposable
                 await ctx.Response.Body.FlushAsync();
                 await Task.Delay(15);
             }
-            await ctx.Response.WriteAsync("data: [DONE]\n\n");
+            if (sendDone) await ctx.Response.WriteAsync("data: [DONE]\n\n");
         });
         await app.StartAsync();
         server = new FakeServer(app, app.Urls.First().TrimEnd('/') + "/v1");
