@@ -36,7 +36,7 @@ internal static class ManualCommands
         {
             using var db = cli.OpenDb(pr);
             var runId = ResolveId(pr.GetRequiredValue(runOpt), db.Runs.Select(r => r.Id).ToList(), "run");
-            var report = await ManualExchange.ImportAsync(db, runId, pr.GetRequiredValue(fileOpt), new UnavailableSandbox(), ct);
+            var report = await ManualExchange.ImportAsync(db, runId, pr.GetRequiredValue(fileOpt), new DockerSandbox(), ct);
             w.WriteLine($"graded {report.Graded} responses");
             foreach (var e in report.Errors) w.WriteLine("  skipped: " + S(e));
             if (report.Graded > 0) RunCommands.Report(db, runId, false, w);

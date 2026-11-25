@@ -15,6 +15,13 @@ internal static class SandboxEnv
 
     public static readonly DockerSandbox Sandbox = new();
 
+    /// <summary>The shared sandbox once the images are built; skips the test when docker is unavailable.</summary>
+    public static async Task<DockerSandbox> Require()
+    {
+        if (await Ready.Value is { } skip) Assert.Skip("docker unavailable: " + skip);
+        return Sandbox;
+    }
+
     public static async Task<SandboxResult> Run(SandboxLanguage lang, string code, string entry, int timeoutMs = 10_000,
         SandboxAction action = SandboxAction.Run, int repetitions = 1, params string[] inputs)
     {

@@ -5,7 +5,9 @@ using System.Security.Cryptography;
 using System.Text;
 using ModelBench.Core.Config;
 using ModelBench.Core.Domain;
+using ModelBench.Core.Grading;
 using ModelBench.Core.Persistence;
+using ModelBench.Core.Sandbox;
 
 namespace ModelBench.Core.Execution;
 
@@ -40,7 +42,19 @@ public static class RunService
         machine = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Environment.MachineName)))[..12],
         appVersion = typeof(RunService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown",
         gitSha = GitSha(),
+        sandbox = SandboxFingerprint(),
     });
+
+    /// <summary>Image ids and docker server version, or "unavailable" when docker cannot be queried. Never guessed.</summary>
+    private static object SandboxFingerprint()
+    {
+        try
+        {
+            var i = Task.Run(() => SandboxImages.InspectAsync()).GetAwaiter().GetResult();
+            return new { pythonImageId = i.PythonImageId, dotnetImageId = i.DotnetImageId, dockerVersion = i.DockerVersion };
+        }
+        catch (InfraException) { return "unavailable"; }
+    }
 
     private static string GitSha()
     {

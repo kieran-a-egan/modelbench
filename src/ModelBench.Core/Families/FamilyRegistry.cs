@@ -2,7 +2,8 @@ namespace ModelBench.Core.Families;
 
 public static class FamilyRegistry
 {
-    public static readonly IReadOnlyList<IBenchmarkFamily> All = [new MathematicsFamily()];
+    public static readonly IReadOnlyList<IBenchmarkFamily> All = [new MathematicsFamily(),
+        new CodeGenerationFamily(), new DebuggingFamily()];
 
     public static IBenchmarkFamily? Find(string id) => All.FirstOrDefault(f => f.Id == id);
 
