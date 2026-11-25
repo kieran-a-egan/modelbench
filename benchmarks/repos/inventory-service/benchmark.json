@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "category": "repository-comprehension",
+  "mode": "SingleTurn",
+  "complexity": 2,
+  "description": "Four questions about a small hand-written inventory service.",
+  "include": ["inventory/*.py"],
+  "maxBytes": 8000,
+  "questions": [
+    {
+      "question": "Question: what does `place_order(\"widget\", 10, 12.5)` return? Give the number inside <answer></answer> tags, as a plain decimal without units.",
+      "answerFormat": "Tagged",
+      "graders": [{ "type": "numeric", "name": "total", "config": { "expected": "150" } }],
+      "reference": "12.5 x 10 = 125, plus 20% tax = 150\n<answer>150</answer>",
+      "knownBad": ["<answer>125</answer>", "<answer>1500</answer>"]
+    },
+    {
+      "question": "Question: in which file is `is_low` defined? Give the path exactly as in the file header inside <answer></answer> tags.",
+      "answerFormat": "Tagged",
+      "graders": [{ "type": "exact", "name": "path", "config": { "expected": "inventory/stock.py", "normalize": "none" } }],
+      "reference": "<answer>inventory/stock.py</answer>",
+      "knownBad": ["<answer>inventory/orders.py</answer>", "<answer>stock.py</answer>"]
+    },
+    {
+      "question": "Question: what is the largest quantity that `place_order` accepts in one order? Give the integer inside <answer></answer> tags.",
+      "answerFormat": "Tagged",
+      "graders": [{ "type": "numeric", "name": "limit", "config": { "expected": "100" } }],
+      "reference": "qty > MAX_BATCH is rejected and MAX_BATCH is 100.\n<answer>100</answer>",
+      "knownBad": ["<answer>99</answer>", "<answer>101</answer>"]
+    },
+    {
+      "question": "Question: which functions call `add_stock` directly? Give a JSON array of function names, in any order, inside <answer></answer> tags.",
+      "answerFormat": "Json",
+      "graders": [{ "type": "structural", "name": "callers", "config": { "expected": ["cancel_order", "receive_shipment"], "unorderedArrays": true } }],
+      "reference": "<answer>[\"receive_shipment\",\"cancel_order\"]</answer>",
+      "knownBad": ["<answer>[\"cancel_order\"]</answer>", "<answer>[\"cancel_order\",\"receive_shipment\",\"place_order\"]</answer>"]
+    }
+  ]
+}
