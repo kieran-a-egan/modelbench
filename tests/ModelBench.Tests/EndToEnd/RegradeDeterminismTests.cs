@@ -33,7 +33,7 @@ public class RegradeDeterminismTests
         using var db = dir.OpenDb();
         // Families without a reference answer (file-defined without one) cannot be scripted.
         var fams = FamilyRegistry.All
-            .Where(f => f.Mode is ExecutionMode.SingleTurn or ExecutionMode.ToolAssisted && f.Generate(new Rng(1), 2, 0).ReferenceTurns.Count > 0).ToList();
+            .Where(f => f.Generate(new Rng(1), 2, 0).ReferenceTurns.Count > 0).ToList();
         var suite = SuiteGenerator.Generate(new SuiteSpec("regrade", 7, [.. fams.Select(f => new FamilySpec(f.Id, 2, 1))]));
         SuiteGenerator.Persist(db, suite);
 

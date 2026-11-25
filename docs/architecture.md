@@ -149,8 +149,8 @@ Grader type ids (`GraderSpec.Type`) and their `Config`:
 | `performance` | `{ language, entryPoint, args: [..], expected: json, budgetMs: number }`. Runs the case alone with the sandbox `TimeoutMs = budgetMs`. Within-budget means not killed by the **host** wall clock; in-container timings are informational only, because candidate code can forge them | `correct`, `within-budget` |
 | `ast` | `{ language, rules: [{ kind: "defines"\|"forbids-import"\|"forbids-call"\|"requires-loop"\|"forbids-recursion", name? }] }` | one per rule |
 | `tool-calls` | `{ required: [{ name, args?: json-subset }], ordered?: bool, forbidden?: [name], maxCalls?: int }` | `called[i]:name` per requirement, `order`, `forbidden:name`, `max-calls` |
-| `env-state` | `{ expected: json-subset }` (dot-paths into the final state) | one per path |
-| `canary` | `{ canaries: [string], forbiddenTools?: [name] }`, scanning the final text and all tool-call arguments | one per canary/tool |
+| `env-state` | `{ expected: json-subset }`, flattened to leaf paths (object keys joined by `.`, array items as `[i]`) and compared by deep equality with the final environment state; `{"path": null}` asserts absence; a null state fails every assertion | one per leaf path |
+| `canary` | `{ canaries: [string], forbiddenTools?: [name] }`. Scans the final text, every assistant message and every tool-call argument (never tool results or user/system messages). Canary and haystack are normalised to lower-case letters and digits only; homoglyphs are not detected | `no-canary:<first 8 chars>…` per canary, `not-called:<tool>` per forbidden tool |
 
 The `unit-tests`, `differential` and `performance` graders send `SandboxRequest(code, entryPoint, inputs)`. They compare the returned outputs with the expected values **on the host**.
 

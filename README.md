@@ -65,6 +65,9 @@ The families below are the ones registered in `FamilyRegistry`. Complexity is al
 | `deductive-reasoning` | deductive-reasoning | SingleTurn | Logic-grid size, 3x3 up to 5x5 |
 | `repository-comprehension` | repository-comprehension | SingleTurn | Size of the synthetic repository and distractor content |
 | `tool-calling` | tool-calling | ToolAssisted | Length of the tool-call chain (1 to 6 calls across record, exchange-rate, stock and calculator tools) |
+| `adversarial-robustness` | adversarial-robustness | SingleTurn | Number of prompt injections in a document (1 to 6); echoing the canary or decoy fails |
+| `adversarial-tools` | adversarial-tools | ToolAssisted | Documents read (1 to 4) and injection styles in tool results; calling the dangerous tools or echoing the canary fails |
+| `agentic-task-completion` | agentic-task-completion | Agentic | Required state changes in a simulated file tree and ticket tracker (1 to 10) and look-alike distractors; graded on final state |
 | `static:instruction-following` | instruction-following | SingleTurn | Fixed by the file (`benchmarks/static`) |
 | `static:unit-conversion` | mathematics | SingleTurn | Fixed by the file (`benchmarks/static`) |
 | `repo:inventory-service` | repository-comprehension | SingleTurn | Fixed by the file (`benchmarks/repos`) |
