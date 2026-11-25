@@ -44,6 +44,7 @@ else
         </label>
         <label>Mode <select @bind="mode">@foreach (var m in new[] { ExecutionMode.SingleTurn, ExecutionMode.ToolAssisted, ExecutionMode.Agentic }) { <option value="@m">@m</option> }</select></label>
         <label>Repeats <input type="number" min="1" @bind="repeats" /></label>
+        <label>Concurrency <input type="number" min="1" @bind="concurrency" /></label>
         <label>Timeout per attempt (seconds) <input type="number" min="1" @bind="timeout" /></label>
         <label>Label <input @bind="label" /></label>
         <div><button type="submit" disabled="@busy">Start run</button></div>
@@ -64,7 +65,7 @@ else
     private Guid suiteId;
     private string modelRef = "", variant = "", label = "";
     private ExecutionMode mode = ExecutionMode.SingleTurn;
-    private int repeats = 1, timeout = 300;
+    private int repeats = 1, timeout = 300, concurrency = 1;
     private bool busy;
     private string? error;
 
@@ -115,7 +116,7 @@ else
             var run = await Task.Run(() =>
             {
                 using var db = Open();
-                return RunService.CreateRun(db, suiteId, model, mode, repeats, timeout, new RetryPolicy(), string.IsNullOrWhiteSpace(label) ? null : label.Trim());
+                return RunService.CreateRun(db, suiteId, model, mode, repeats, timeout, new RetryPolicy(), string.IsNullOrWhiteSpace(label) ? null : label.Trim(), concurrency);
             });
             Host.Enqueue(run.Id, model);
             Nav.NavigateTo($"/runs/{run.Id}");

@@ -3,6 +3,8 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
+using ModelBench.Core.Generation;
 using ModelBench.Core.Config;
 using ModelBench.Core.Domain;
 using ModelBench.Core.Grading;
@@ -15,8 +17,9 @@ namespace ModelBench.Core.Execution;
 public static class RunService
 {
     /// <summary>Creates a run for a persisted suite (AC-04), snapshotting the model (no secrets), retry policy and environment.</summary>
-    public static Run CreateRun(BenchDb db, Guid suiteId, ResolvedModel model, ExecutionMode mode, int repeats, int timeoutSeconds, RetryPolicy retryPolicy, string? label)
+    public static Run CreateRun(BenchDb db, Guid suiteId, ResolvedModel model, ExecutionMode mode, int repeats, int timeoutSeconds, RetryPolicy retryPolicy, string? label, int concurrency = 1)
     {
+        if (concurrency < 1) throw new ArgumentException("concurrency must be >= 1");
         if (repeats < 1) throw new ArgumentException("repeats must be >= 1");
         if (timeoutSeconds < 1) throw new ArgumentException("timeout must be >= 1 second");
         if (!db.Suites.Any(s => s.Id == suiteId)) throw new InvalidOperationException($"suite {suiteId} is not persisted");
@@ -27,7 +30,7 @@ public static class RunService
         var run = new Run
         {
             SuiteId = suiteId, ModelRef = model.Ref, ModelSnapshotJson = ModelCatalog.Snapshot(model), Mode = mode,
-            Repeats = repeats, TimeoutSeconds = timeoutSeconds, RetryPolicyJson = JsonUtil.Serialize(retryPolicy),
+            Repeats = repeats, Concurrency = concurrency, TimeoutSeconds = timeoutSeconds, RetryPolicyJson = JsonUtil.Serialize(retryPolicy),
             EnvironmentJson = EnvironmentJson(), Status = RunStatus.Pending, Label = label,
         };
         db.Runs.Add(run);
@@ -35,8 +38,58 @@ public static class RunService
         return run;
     }
 
+    /// <summary>
+    /// Validates that a run can be resumed and returns the model re-resolved from the catalog. Refuses when the suite is missing or
+    /// changed, or the model snapshot differs from the stored one (unless allowConfigChange, which is noted in Run.Label).
+    /// </summary>
+    public static ResolvedModel PrepareResume(BenchDb db, Guid runId, ModelCatalog catalog, bool allowConfigChange)
+    {
+        var run = db.Runs.SingleOrDefault(r => r.Id == runId) ?? throw new InvalidOperationException($"run {runId} not found");
+        if (run.Mode == ExecutionMode.Manual) throw new InvalidOperationException("manual runs are completed with 'manual import'");
+        var suite = db.Suites.SingleOrDefault(s => s.Id == run.SuiteId) ?? throw new InvalidOperationException($"suite {run.SuiteId} no longer exists");
+        var tasks = db.Tasks.Where(t => t.SuiteId == suite.Id).OrderBy(t => t.Index).ToList();
+        if (tasks.Any(t => SuiteGenerator.TaskHash(t.PromptJson, t.HiddenJson) != t.ContentHash)
+            || SuiteGenerator.SuiteHash(tasks.Select(t => t.ContentHash)) != suite.ContentHash)
+            throw new InvalidOperationException($"suite {suite.Id} no longer matches its content hash; refusing to resume");
+
+        var model = catalog.Resolve(run.ModelRef);
+        var diff = SnapshotDiff(run.ModelSnapshotJson, ModelCatalog.Snapshot(model));
+        if (diff.Count > 0)
+        {
+            if (!allowConfigChange)
+                throw new InvalidOperationException($"model configuration for {run.ModelRef} changed since the run started:\n  " + string.Join("\n  ", diff) + "\nuse --allow-config-change to resume anyway");
+            const string note = "[config changed on resume]";
+            if (run.Label?.Contains(note) != true)
+            {
+                run.Label = string.IsNullOrEmpty(run.Label) ? note : $"{run.Label} {note}";
+                db.SaveChanges();
+            }
+        }
+        return model;
+    }
+
+    private static List<string> SnapshotDiff(string stored, string fresh)
+    {
+        var a = JsonNode.Parse(stored)!.AsObject();
+        var b = JsonNode.Parse(fresh)!.AsObject();
+        static string V(JsonNode? n) => n?.ToJsonString() ?? "(absent)";
+        return a.Select(kv => kv.Key).Union(b.Select(kv => kv.Key)).Order()
+            .Where(k => V(a[k]) != V(b[k]))
+            .Select(k => $"{k}: {V(a[k])} -> {V(b[k])}").ToList();
+    }
+
+    /// <summary>Asks the process executing the run (this or another one) to stop; it polls the flag.</summary>
+    public static void RequestCancel(BenchDb db, Guid runId)
+    {
+        var run = db.Runs.SingleOrDefault(r => r.Id == runId) ?? throw new InvalidOperationException($"run {runId} not found");
+        if (run.Status is not (RunStatus.Pending or RunStatus.Running)) throw new InvalidOperationException($"run is {run.Status}, nothing to cancel");
+        run.CancelRequested = true;
+        db.SaveChanges();
+    }
+
     public static string EnvironmentJson() => JsonUtil.Serialize(new
     {
+        processorCount = Environment.ProcessorCount,
         os = RuntimeInformation.OSDescription,
         dotnet = RuntimeInformation.FrameworkDescription,
         machine = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Environment.MachineName)))[..12],

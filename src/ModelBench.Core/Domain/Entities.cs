@@ -55,6 +55,8 @@ public class Run
     /// <summary>OS, .NET, docker version, sandbox image digests, app git SHA.</summary>
     public required string EnvironmentJson { get; set; }
     public RunStatus Status { get; set; }
+    /// <summary>Set by 'run cancel' (or the web button); the executing process polls it and stops.</summary>
+    public bool CancelRequested { get; set; }
     public string? Label { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? CompletedAt { get; set; }

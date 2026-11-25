@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Hosting;
 namespace ModelBench.Tests.Support;
 
 /// <summary>What the fake OpenAI-compatible endpoint answers: an HTTP error, or a stream of SSE data payloads.</summary>
-public sealed record FakeReply(int Status = 200, IReadOnlyList<string>? Chunks = null, string Body = "")
+public sealed record FakeReply(int Status = 200, IReadOnlyList<string>? Chunks = null, string Body = "", string? RetryAfter = null)
 {
     public static FakeReply Error(int status, string body = "boom") => new(status, null, body);
 
@@ -65,6 +65,7 @@ public sealed class FakeServer : IAsyncDisposable
             lock (server!._bodies) { server._bodies.Add(raw); server._auth.Add(ctx.Request.Headers.Authorization.FirstOrDefault()); server._headers.Add(ctx.Request.Headers.ToDictionary(h => h.Key.ToLowerInvariant(), h => h.Value.ToString())); index = server._calls++; }
             var reply = handler(index, JsonNode.Parse(raw)!.AsObject());
             ctx.Response.StatusCode = reply.Status;
+            if (reply.RetryAfter is not null) ctx.Response.Headers.RetryAfter = reply.RetryAfter;
             if (reply.Chunks is null) { await ctx.Response.WriteAsync(reply.Body); return; }
             ctx.Response.ContentType = "text/event-stream";
             foreach (var chunk in reply.Chunks)

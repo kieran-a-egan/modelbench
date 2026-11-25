@@ -99,13 +99,23 @@ Episodes:
   - All telemetry is Unavailable.
 
 `RunExecutor`:
-- Work items are (task × repeat) pairs, minus attempts already in a terminal outcome. This is what makes resume work.
-- Workers read from a `Channel`, with `Run.Concurrency` workers.
-- Each attempt has a timeout of `Run.TimeoutSeconds`, enforced with a linked `CancellationTokenSource`. Exceeding it records outcome `Timeout`.
-- Retry follows `RetryPolicy { MaxRetries, BaseDelayMs, MaxDelayMs }` with exponential backoff, and applies **only** to `InfraException.Retryable`.
-- When retries are exhausted, or the exception is not retryable, the outcome is `InfraError`.
-- Cancellation (Ctrl+C or the web cancel button) stops queuing, marks in-flight attempts `Cancelled` and sets the run to `Cancelled`. `run resume` continues the run later.
-- Each attempt is persisted as soon as it finishes.
+- Work items are (task x repeat) pairs, minus attempts already in a terminal outcome. They are queued in (task index, repeat) order; completion order is not deterministic when `Run.Concurrency` > 1. This is what makes resume work.
+- `Run.Concurrency` workers read from a `Channel`. Each worker has its own `BenchDb` context (DbContext is not thread-safe); each attempt is persisted as soon as it finishes, and the unique (RunId, TaskId, RepeatIndex) index guards against duplicates. `AttemptCompleted` is raised serially under a lock.
+- Each attempt has a timeout of `Run.TimeoutSeconds`, enforced with a linked `CancellationTokenSource`. Exceeding it records outcome `Timeout`. There is no overall run deadline.
+- Retry follows `RetryPolicy { MaxRetries, BaseDelayMs, MaxDelayMs }` (`run start --max-retries`) and applies **only** to `InfraException.Retryable`. The delay is `base * 2^n` with equal jitter (50-100%), derived from a hash of (run, task, repeat, retry) so it is deterministic. A `Retry-After` on 429/503 (carried by `RetryAfterException`, thrown by `ProviderHttp`) is honoured when longer than the backoff. Every delay is capped at `MaxDelayMs`. `Attempt.Retries` counts retries.
+- When retries are exhausted, or the exception is not retryable, the outcome is `InfraError`. Sandbox `InfraException`s during grading are `InfraError` too. An empty or wrong-format answer is `Failed` and is never retried. `InfraError`, `Timeout` and `Cancelled` are excluded from scores.
+- Cancellation:
+  - Ctrl+C, the web cancel button, or `run cancel <id>` stops queuing and marks in-flight attempts `Cancelled`. The run becomes `Cancelled`.
+  - `run cancel` (and the web button, besides its in-process token) sets `Run.CancelRequested`. The executor polls it every 2 s and cancels its own token, so it works from another process. The flag is cleared when an executor starts.
+- Resume (`run resume <id> [--retry-infra] [--allow-config-change]`):
+  - It re-executes missing, `Pending` and `Cancelled` attempts. A run left `Running` by a crashed process resumes the same way. The CLI cannot tell a crashed run from a live one in another process, so do not resume a run that is still executing.
+  - With `--retry-infra`, `InfraError` and `Timeout` rows are deleted and redone. The old row's `Retries` is added to the new attempt's `Retries` (the cumulative count of retries across executions).
+  - `RunService.PrepareResume` first checks that the suite exists and that its task hashes and `Suite.ContentHash` still match. It then re-resolves the model by `Run.ModelRef` and compares its snapshot with `Run.ModelSnapshotJson`. A difference is refused with a per-field diff, unless `--allow-config-change` is given; the run label then gets the suffix `[config changed on resume]`. The stored snapshot is kept unchanged.
+- The environment fingerprint (`Run.EnvironmentJson`) holds OS, .NET runtime, processor count, app version, a hash of the host name, git SHA and sandbox image ids.
+
+## Persistence
+
+`BenchDb.Open` applies EF Core migrations (`src/ModelBench.Core/Persistence/Migrations`; add one with `dotnet tool run dotnet-ef migrations add <Name> --project src/ModelBench.Core --output-dir Persistence/Migrations`). A database created before migrations existed (tables, no `__EFMigrationsHistory`) is rejected with a message to delete or rename it. There is no converter.
 
 ## Grading
 

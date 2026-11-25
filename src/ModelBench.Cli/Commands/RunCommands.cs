@@ -24,21 +24,42 @@ internal static class RunCommands
         var repeatsOpt = new Option<int>("--repeats") { DefaultValueFactory = _ => 1, Description = "Attempts per task" };
         var timeoutOpt = new Option<int>("--timeout") { DefaultValueFactory = _ => 300, Description = "Per-attempt timeout in seconds" };
         var labelOpt = new Option<string?>("--label") { Description = "Free-text run label" };
-        var start = new Command("start", "Create a run and execute it") { suiteOpt, modelOpt, modeOpt, repeatsOpt, timeoutOpt, labelOpt };
+        var concurrencyOpt = new Option<int>("--concurrency") { DefaultValueFactory = _ => 1, Description = "Parallel attempts" };
+        var maxRetriesOpt = new Option<int>("--max-retries") { DefaultValueFactory = _ => new RetryPolicy().MaxRetries, Description = "Retries per attempt on retryable infrastructure errors" };
+        var start = new Command("start", "Create a run and execute it") { suiteOpt, modelOpt, modeOpt, repeatsOpt, timeoutOpt, labelOpt, concurrencyOpt, maxRetriesOpt };
         start.SetAction((pr, ct) => Guard(pr, async w =>
         {
             using var db = cli.OpenDb(pr);
             var suiteId = ResolveId(pr.GetRequiredValue(suiteOpt), db.Suites.Select(s => s.Id).ToList(), "suite");
             var model = cli.Catalog(pr).Resolve(pr.GetRequiredValue(modelOpt));
             var created = RunService.CreateRun(db, suiteId, model, pr.GetRequiredValue(modeOpt), pr.GetRequiredValue(repeatsOpt),
-                pr.GetRequiredValue(timeoutOpt), new RetryPolicy(), pr.GetValue(labelOpt));
+                pr.GetRequiredValue(timeoutOpt), new RetryPolicy(MaxRetries: pr.GetRequiredValue(maxRetriesOpt)), pr.GetValue(labelOpt), pr.GetRequiredValue(concurrencyOpt));
             w.WriteLine($"run {created.Id} on {S(model.Ref)}");
-            var executor = new RunExecutor(ProviderFactory.Create(model), model, new DockerSandbox());
-            executor.AttemptCompleted += p => w.WriteLine(
-                $"[{p.Done}/{p.Total}] {p.FamilyId} c{p.Complexity} repeat {p.Repeat}: {p.Outcome}{(p.Score is { } s ? $" score {s.ToString("0.00", CultureInfo.InvariantCulture)}" : "")}");
-            await executor.ExecuteAsync(db, created.Id, ct);
-            Report(db, created.Id, false, w);
-            return db.Runs.AsNoTracking().Single(r => r.Id == created.Id).Status == RunStatus.Completed ? 0 : 1;
+            return await Execute(db, created.Id, model, false, w, ct);
+        }));
+
+        var resumeId = new Argument<string>("id") { Description = "Run id or unique prefix" };
+        var retryInfra = new Option<bool>("--retry-infra") { Description = "Also redo InfraError and Timeout attempts (their retry counts are added to the new attempt)" };
+        var allowChange = new Option<bool>("--allow-config-change") { Description = "Resume even if the model configuration differs from the one the run started with" };
+        var resume = new Command("resume", "Run the missing, pending and cancelled attempts of a run") { resumeId, retryInfra, allowChange };
+        resume.SetAction((pr, ct) => Guard(pr, async w =>
+        {
+            using var db = cli.OpenDb(pr);
+            var id = ResolveId(pr.GetRequiredValue(resumeId), db.Runs.Select(r => r.Id).ToList(), "run");
+            var model = RunService.PrepareResume(db, id, cli.Catalog(pr), pr.GetValue(allowChange));
+            w.WriteLine($"resuming run {id} on {S(model.Ref)}");
+            return await Execute(db, id, model, pr.GetValue(retryInfra), w, ct);
+        }));
+
+        var cancelId = new Argument<string>("id") { Description = "Run id or unique prefix" };
+        var cancel = new Command("cancel", "Ask the process executing a run to stop (resume it later)") { cancelId };
+        cancel.SetAction((pr, ct) => Guard(pr, w =>
+        {
+            using var db = cli.OpenDb(pr);
+            var id = ResolveId(pr.GetRequiredValue(cancelId), db.Runs.Select(r => r.Id).ToList(), "run");
+            RunService.RequestCancel(db, id);
+            w.WriteLine($"cancel requested for run {id}");
+            return Task.FromResult(0);
         }));
 
         var list = new Command("list", "List runs");
@@ -68,9 +89,21 @@ internal static class RunCommands
         }));
 
         run.Subcommands.Add(start);
+        run.Subcommands.Add(resume);
+        run.Subcommands.Add(cancel);
         run.Subcommands.Add(list);
         run.Subcommands.Add(show);
         return run;
+    }
+
+    private static async Task<int> Execute(BenchDb db, Guid runId, ResolvedModel model, bool retryInfra, TextWriter w, CancellationToken ct)
+    {
+        var executor = new RunExecutor(ProviderFactory.Create(model), model, new DockerSandbox());
+        executor.AttemptCompleted += p => w.WriteLine(
+            $"[{p.Done}/{p.Total}] {p.FamilyId} c{p.Complexity} repeat {p.Repeat}: {p.Outcome}{(p.Score is { } s ? $" score {s.ToString("0.00", CultureInfo.InvariantCulture)}" : "")}");
+        await executor.ExecuteAsync(db, runId, ct, retryInfra);
+        Report(db, runId, false, w);
+        return db.Runs.AsNoTracking().Single(r => r.Id == runId).Status == RunStatus.Completed ? 0 : 1;
     }
 
     private static string F(double v) => v.ToString("0.000", CultureInfo.InvariantCulture);

@@ -22,10 +22,13 @@ public sealed class RunHostService(Func<BenchDb> openDb, ILogger<RunHostService>
         _queue.Writer.TryWrite(runId);
     }
 
-    /// <summary>Cancels a queued or running run; the executor marks it Cancelled.</summary>
+    /// <summary>Cancels a queued or running run (in-process token, plus the DB flag so the state is visible to other processes); the executor marks it Cancelled.</summary>
     public void Cancel(Guid runId)
     {
         if (_pending.TryGetValue(runId, out var p)) p.Cts.Cancel();
+        using var db = openDb();
+        try { RunService.RequestCancel(db, runId); }
+        catch (InvalidOperationException) { } // already finished
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
