@@ -13,7 +13,7 @@ internal static class SelfTestCommand
         var cmd = new Command("selftest", "Replay every family's reference and known-bad answers through the real pipeline") { family };
         cmd.SetAction((pr, ct) => Guard(pr, async w =>
         {
-            var report = await SelfTest.RunAsync(pr.GetValue(family), 3, new UnavailableSandbox(), ct);
+            var report = await SelfTest.RunAsync(pr.GetValue(family), 3, new DockerSandbox(), ct);
             foreach (var f in report.Failures)
                 w.WriteLine($"FAIL {f.Family} c{f.Complexity} #{f.Sample} {f.Case}: {S(f.Problem)}");
             w.WriteLine(report.Ok ? $"selftest passed ({report.Checks} checks)" : $"selftest FAILED: {report.Failures.Count} of {report.Checks} checks");

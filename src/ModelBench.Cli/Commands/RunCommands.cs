@@ -32,7 +32,7 @@ internal static class RunCommands
             var created = RunService.CreateRun(db, suiteId, model, pr.GetRequiredValue(modeOpt), pr.GetRequiredValue(repeatsOpt),
                 pr.GetRequiredValue(timeoutOpt), new RetryPolicy(), pr.GetValue(labelOpt));
             w.WriteLine($"run {created.Id} on {S(model.Ref)}");
-            var executor = new RunExecutor(ProviderFactory.Create(model), model, new UnavailableSandbox());
+            var executor = new RunExecutor(ProviderFactory.Create(model), model, new DockerSandbox());
             executor.AttemptCompleted += p => w.WriteLine(
                 $"[{p.Done}/{p.Total}] {p.FamilyId} c{p.Complexity} repeat {p.Repeat}: {p.Outcome}{(p.Score is { } s ? $" score {s.ToString("0.00", CultureInfo.InvariantCulture)}" : "")}");
             await executor.ExecuteAsync(db, created.Id, ct);
