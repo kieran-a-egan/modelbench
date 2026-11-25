@@ -8,7 +8,7 @@ public static class FamilyRegistry
         new PolicyEvaluationFamily(), new LongContextRetrievalFamily(),
         new CodeGenerationFamily(), new DebuggingFamily(),
         new ConstraintSatisfactionFamily(), new DeductiveReasoningFamily(), new RepositoryComprehensionFamily(),
-        new ToolCallingFamily(),
+        new ToolCallingFamily(), new AgenticTaskCompletionFamily(), new AdversarialRobustnessFamily(), new AdversarialToolsFamily(),
         .. DefinitionLoader.Discover(),
     ];
 
