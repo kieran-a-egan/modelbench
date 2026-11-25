@@ -1,0 +1,35 @@
+@inject ModelsFile Models
+@inject RunHostService Host
+@inject NavigationManager Nav
+
+<section aria-label="Resume run">
+    <h2>Resume</h2>
+    <p class="muted">Runs the missing, pending and cancelled attempts. A run still executing in another process must not be resumed.</p>
+    <label><input type="checkbox" @bind="retryInfra" /> Retry infrastructure errors and timeouts</label>
+    <button type="button" @onclick="Resume">Resume run</button>
+    @if (error is not null)
+    {
+        <p class="error" role="alert">@error</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Guid RunId { get; set; }
+
+    private bool retryInfra;
+    private string? error;
+
+    private void Resume()
+    {
+        error = null;
+        try
+        {
+            Host.Resume(RunId, Models.Catalog(), retryInfra);
+            Nav.Refresh(forceReload: true);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or System.Text.Json.JsonException)
+        {
+            error = ex.Message;
+        }
+    }
+}

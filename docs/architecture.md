@@ -31,13 +31,13 @@ Run (snapshot) ──► RunExecutor ──► Episode (single-turn | tool loop 
 | `src/ModelBench.Core/Grading` | `IGrader`, `GradingContext`, `AssertionOutcome`, `InfraException`, `AnswerExtractor`, `GradingPipeline`, `GraderRegistry`, one file per grader |
 | `src/ModelBench.Core/Providers` | `IModelProvider`, `ProviderFactory`, adapters, `ScriptedProvider` (selftest/tests), SSE reader |
 | `src/ModelBench.Core/Config` | `ResolvedModel`, `ModelCatalog` (models.json loader) |
-| `src/ModelBench.Core/Execution` | `RunService` (create/resume/cancel), `RunExecutor`, `Episode` runners, `RetryPolicy`, manual export/import, `SelfTest` |
+| `src/ModelBench.Core/Execution` | `RunService` (create/resume/cancel), `RunExecutor`, `Episode` runners, `RetryPolicy`, manual export/import, `SelfTest`, `Regrader` (read-only re-grading of stored attempts) |
 | `src/ModelBench.Core/Sandbox` | `ISandbox`, `DockerSandbox`, sandbox protocol |
 | `src/ModelBench.Core/Metrics` | metric computation (cost, energy, throughput, consistency) |
 | `src/ModelBench.Core/Persistence` | `BenchDb` (EF Core SQLite), `DbPaths` |
 | `src/ModelBench.Core/Reporting` | leaderboard, comparison, failure listing, CSV/JSON export queries |
 | `src/ModelBench.Cli` | `Program.cs` + `Commands/*.cs` (System.CommandLine); thin layer over Core |
-| `src/ModelBench.Web` | Blazor Server pages over Core; background `RunHostedService` |
+| `src/ModelBench.Web` | Blazor Server pages over Core; `RunHostService` (`RunHostService.cs`), a background service that queues and executes runs, including resumes |
 | `sandbox/python`, `sandbox/dotnet` | Dockerfiles and in-container runners |
 | `benchmarks/static`, `benchmarks/repos` | file-based benchmark definitions |
 | `tests/ModelBench.Tests` | xUnit v3 tests; folders mirror Core |
@@ -80,7 +80,7 @@ Rules:
 - `TaskInstance.ContentHash` is `SHA256(PromptJson + "\n" + HiddenJson)` as lowercase hex. `Suite.ContentHash` is `SHA256` of the task hashes joined by `\n`, in index order.
 - `Validate` runs on every generated task. Generation fails loudly if validation fails, so it never retries silently with another seed. A family that needs rejection sampling does it *inside* `Generate`, using the same `Rng`.
 - `suite verify <id>` regenerates the suite from `SpecJson` and compares every hash.
-- Static definitions (`benchmarks/static/*.json`) and repository definitions (`benchmarks/repos/<name>/benchmark.json`) are exposed as families with ids `static:<name>` and `repo:<name>`. Their Version is a content hash of the definition files. `Generate` ignores rng and complexity comes from the file.
+- Static definitions (`benchmarks/static/*.json`) and repository definitions (`benchmarks/repos/<name>/benchmark.json`) are exposed as families with ids `static:<name>` and `repo:<name>`. Their `Version` is the integer `version` from the definition file. The content hash of the definition (the JSON plus any prompt files or included repository files) is stored in every task's `TaskHidden.Reference` (`{contentHash, task}`), so editing a definition changes the task hash even when `version` is not bumped. `Generate` ignores rng and complexity comes from the file; task *i* of an entry is definition task *i* modulo the task count.
 
 ## Execution
 
@@ -107,6 +107,7 @@ Episodes:
 - Cancellation:
   - Ctrl+C, the web cancel button, or `run cancel <id>` stops queuing and marks in-flight attempts `Cancelled`. The run becomes `Cancelled`.
   - `run cancel` (and the web button, besides its in-process token) sets `Run.CancelRequested`. The executor polls it every 2 s and cancels its own token, so it works from another process. The flag is cleared when an executor starts.
+- The dashboard offers Resume for Cancelled, Failed and Running runs (`RunHostService.Resume`: `PrepareResume`, then `ExecuteAsync(retryInfra)`); a refusal message is shown on the page. It has no `--allow-config-change` equivalent.
 - Resume (`run resume <id> [--retry-infra] [--allow-config-change]`):
   - It re-executes missing, `Pending` and `Cancelled` attempts. A run left `Running` by a crashed process resumes the same way. The CLI cannot tell a crashed run from a live one in another process, so do not resume a run that is still executing.
   - With `--retry-infra`, `InfraError` and `Timeout` rows are deleted and redone. The old row's `Retries` is added to the new attempt's `Retries` (the cumulative count of retries across executions).
@@ -115,7 +116,7 @@ Episodes:
 
 ## Persistence
 
-`BenchDb.Open` applies EF Core migrations (`src/ModelBench.Core/Persistence/Migrations`; add one with `dotnet tool run dotnet-ef migrations add <Name> --project src/ModelBench.Core --output-dir Persistence/Migrations`). A database created before migrations existed (tables, no `__EFMigrationsHistory`) is rejected with a message to delete or rename it. There is no converter.
+`BenchDb.Open` applies EF Core migrations, enables WAL and a 30 s busy timeout, and keeps the connection open for the life of the context. Migrations (`src/ModelBench.Core/Persistence/Migrations`; add one with `dotnet tool run dotnet-ef migrations add <Name> --project src/ModelBench.Core --output-dir Persistence/Migrations`). A database created before migrations existed (tables, no `__EFMigrationsHistory`) is rejected with a message to delete or rename it. There is no converter.
 
 ## Grading
 
@@ -139,19 +140,21 @@ Grader type ids (`GraderSpec.Type`) and their `Config`:
 | `exact` | `{ expected: string, normalize?: "none"\|"trim"\|"whitespace"\|"casefold" }` | one |
 | `structural` | `{ expected: json, unorderedArrays?: bool, key?: string }` (key = compare only that top-level property of the answer object) | one per mismatching JSON path (or a single pass) |
 | `numeric` | `{ expected: "p/q" or number string, absTol?: number, relTol?: number }` | one |
-| `json-schema` | `{ schema: json }` | one per schema error (or a single pass) |
-| `text-constraints` | `{ constraints: [{ kind, ... }] }`, where kind is one of: word-count, max-words, contains, not-contains, regex, line-count, starts-with, ends-with, all-lowercase, no-letter, json-keys, bullet-count | one per constraint |
-| `constraint` | `{ problem: "knapsack"\|"schedule"\|"coloring"\|..., instance: json, optimum?: number }` | one per constraint, plus `optimal` |
-| `compile` | `{ language, entryPoint }` | one |
-| `unit-tests` | `{ language, entryPoint, cases: [{ args: [..], expected: json }], tolerance?: number }` | one per case |
-| `differential` | same shape as unit-tests; cases are seeded random inputs whose expected values come from the host reference solver | one per case |
+| `json-schema` | `{ schema: json }` | `parses`, then one per schema error (named by instance location), or a single `schema` pass |
+| `text-constraints` | `{ constraints: [{ kind, ... }] }`, where kind is one of: word-count `{min?,max?}`, max-words `{max}`, contains / not-contains `{text,caseSensitive?}`, regex `{pattern}`, line-count `{min?,max?}`, starts-with / ends-with `{text}`, all-lowercase, no-letter `{letter}`, json-keys `{keys,exact?}`, bullet-count `{count}` | one per constraint, named `<kind>[i]` |
+| `constraint` | `{ problem: "knapsack"\|"schedule"\|"coloring", instance: json, optimum?: number, optimalOnly?: bool }` (`optimalOnly` emits only `optimal`, so a family can weight feasibility and optimality separately) | `parses`, one per constraint, plus `optimal` when `optimum` is set |
+| `compile` | `{ language: "python"\|"csharp", entryPoint }` | `compiles` |
+| `unit-tests` | `{ language, entryPoint, cases: [{ args: [..], expected: json }], tolerance?: number }` | one per case, `case[i]` |
+| `differential` | same shape as unit-tests; cases are seeded random inputs whose expected values come from the host reference solver | one per case, `random[i]` |
 | `performance` | `{ language, entryPoint, args: [..], expected: json, budgetMs: number }`. Runs the case alone with the sandbox `TimeoutMs = budgetMs`. Within-budget means not killed by the **host** wall clock; in-container timings are informational only, because candidate code can forge them | `correct`, `within-budget` |
 | `ast` | `{ language, rules: [{ kind: "defines"\|"forbids-import"\|"forbids-call"\|"requires-loop"\|"forbids-recursion", name? }] }` | one per rule |
-| `tool-calls` | `{ required: [{ name, args?: json-subset, }], ordered?: bool, forbidden?: [name], maxCalls?: int }` | one per requirement |
+| `tool-calls` | `{ required: [{ name, args?: json-subset }], ordered?: bool, forbidden?: [name], maxCalls?: int }` | `called[i]:name` per requirement, `order`, `forbidden:name`, `max-calls` |
 | `env-state` | `{ expected: json-subset }` (dot-paths into the final state) | one per path |
 | `canary` | `{ canaries: [string], forbiddenTools?: [name] }`, scanning the final text and all tool-call arguments | one per canary/tool |
 
 The `unit-tests`, `differential` and `performance` graders send `SandboxRequest(code, entryPoint, inputs)`. They compare the returned outputs with the expected values **on the host**.
+
+`modelbench run regrade <id> [--check]` (`Execution/Regrader.cs`) re-runs the pipeline on every stored Passed/Failed attempt from its stored transcript plus the task's PromptJson/HiddenJson. For tool and agentic attempts the final environment state is rebuilt by replaying the transcript's tool calls into a fresh `family.CreateEnvironment(hidden)`. It compares assertions (grader, name, expected, actual, score, passed), the attempt score and the outcome, reports differences, and never writes. With `--check` it exits non-zero on any difference (AC-01). Code families need the sandbox.
 
 ## Sandbox (ADR 0003)
 

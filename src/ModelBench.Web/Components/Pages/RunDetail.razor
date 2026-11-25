@@ -16,6 +16,10 @@ else
     </p>
 
     <RunProgress RunId="Id" @rendermode="InteractiveServer" />
+    @if (summary.Status is RunStatus.Cancelled or RunStatus.Failed or RunStatus.Running)
+    {
+        <ResumeRun RunId="Id" @rendermode="InteractiveServer" />
+    }
 
     <SummaryView S="summary" />
 

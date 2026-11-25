@@ -17,6 +17,7 @@ public sealed class WebFixture : IDisposable
     public Run RunA { get; }
     public Run RunB { get; }
     public Run Other { get; }
+    public Run Cancelled { get; }
     public Suite Suite { get; }
     public Attempt Attempt { get; }
 
@@ -30,6 +31,9 @@ public sealed class WebFixture : IDisposable
                 new A(0, 0, Passed, Cost: 1, Ttft: 10), new A(1, 0, Failed, FinalText: "<script>alert(1)</script>"), new A(2, 0, InfraError));
             RunB = ReportSeed.AddRun(db, Suite, "fake/m1", ExecutionMode.SingleTurn, ReportSeed.T0.AddDays(1), new A(0, 0, Failed), new A(1, 0, Passed));
             Other = ReportSeed.AddRun(db, ReportSeed.AddSuite(db, "other", "9999"), "fake/m1", ExecutionMode.SingleTurn, ReportSeed.T0, new A(0, 0, Passed));
+            Cancelled = ReportSeed.AddRun(db, Suite, "fake/m1", ExecutionMode.SingleTurn, ReportSeed.T0.AddDays(2), new A(0, 0, Passed));
+            Cancelled.Status = RunStatus.Cancelled;
+            db.SaveChanges();
             Attempt = db.Attempts.First(a => a.RunId == RunA.Id && a.FinalText!.Contains("<script>"));
         }
         Factory = new WebApplicationFactory<ModelsFile>().WithWebHostBuilder(b => b
@@ -79,6 +83,14 @@ public class WebSmokeTests(WebFixture fx) : IClassFixture<WebFixture>
         Assert.Contains("Pass rate", html);
         Assert.Contains($"/export/runs/{fx.RunA.Id}.json", html);
         Assert.Contains("Failures", html);
+    }
+
+    [Fact] public async Task ResumeButtonOnlyForUnfinishedRuns()
+    {
+        var html = await Ok($"/runs/{fx.Cancelled.Id}");
+        Assert.Contains("Resume run", html);
+        Assert.Contains("Retry infrastructure errors", html);
+        Assert.DoesNotContain("Resume run", await Ok($"/runs/{fx.RunA.Id}"));
     }
 
     [Fact] public async Task CompareShowsDiffAndRefusesDifferentHashes()

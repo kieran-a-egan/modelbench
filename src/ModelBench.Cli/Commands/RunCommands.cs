@@ -88,11 +88,26 @@ internal static class RunCommands
             return Task.FromResult(0);
         }));
 
+        var regradeId = new Argument<string>("id") { Description = "Run id or unique prefix" };
+        var check = new Option<bool>("--check") { Description = "Exit with a non-zero code when any regraded assertion or score differs from the stored one" };
+        var regrade = new Command("regrade", "Re-run grading on stored attempts and report differences (read-only; never overwrites results)") { regradeId, check };
+        regrade.SetAction((pr, ct) => Guard(pr, async w =>
+        {
+            using var db = cli.OpenDb(pr);
+            var id = ResolveId(pr.GetRequiredValue(regradeId), db.Runs.Select(r => r.Id).ToList(), "run");
+            var report = await Regrader.RunAsync(db, id, new DockerSandbox(), ct);
+            foreach (var d in report.Differences)
+                w.WriteLine($"DIFF task {d.TaskIndex} {S(d.FamilyId)} repeat {d.Repeat} attempt {Short(d.AttemptId)}: {Truncate(d.Problem, 600)}");
+            w.WriteLine($"regraded {report.Attempts} attempts: {report.Differences.Count} with differences");
+            return pr.GetValue(check) && report.Differences.Count > 0 ? 1 : 0;
+        }));
+
         run.Subcommands.Add(start);
         run.Subcommands.Add(resume);
         run.Subcommands.Add(cancel);
         run.Subcommands.Add(list);
         run.Subcommands.Add(show);
+        run.Subcommands.Add(regrade);
         return run;
     }
 

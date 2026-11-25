@@ -4,7 +4,7 @@ Read `docs/architecture.md` (contracts, grader configs, invariants) and `docs/ac
 
 ## Commands
 - Build: `dotnet build -warnaserror`. Warnings are errors via Directory.Build.props.
-- Test: `dotnet test`. To run a subset, pass `--filter-class` or `--filter-method` after `--`. This is xUnit v3, so use `dotnet test -- --filter-class "*Name*"`.
+- Test: `dotnet test` (global.json selects the Microsoft.Testing.Platform runner). To run a subset, run the test exe directly after a build: `tests/ModelBench.Tests/bin/Debug/net10.0/ModelBench.Tests.exe -class "ModelBench.Tests.Namespace.ClassName"`; `-method`, `-namespace` and wildcards (`-class "*Regrade*"`) also work.
 - CLI: `dotnet run --project src/ModelBench.Cli -- <args>`
 - Web: `dotnet run --project src/ModelBench.Web`
 - Sandbox images: `dotnet run --project src/ModelBench.Cli -- sandbox build`

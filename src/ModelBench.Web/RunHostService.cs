@@ -14,12 +14,21 @@ namespace ModelBench.Web;
 public sealed class RunHostService(Func<BenchDb> openDb, ILogger<RunHostService> log) : BackgroundService
 {
     private readonly Channel<Guid> _queue = Channel.CreateUnbounded<Guid>();
-    private readonly ConcurrentDictionary<Guid, (ResolvedModel Model, CancellationTokenSource Cts)> _pending = new();
+    private readonly ConcurrentDictionary<Guid, (ResolvedModel Model, CancellationTokenSource Cts, bool RetryInfra)> _pending = new();
 
-    public void Enqueue(Guid runId, ResolvedModel model)
+    public void Enqueue(Guid runId, ResolvedModel model, bool retryInfra = false)
     {
-        _pending[runId] = (model, new CancellationTokenSource());
+        _pending[runId] = (model, new CancellationTokenSource(), retryInfra);
         _queue.Writer.TryWrite(runId);
+    }
+
+    /// <summary>Validates and queues a resume (see RunService.PrepareResume). Throws InvalidOperationException with the reason when refused.</summary>
+    public void Resume(Guid runId, ModelCatalog catalog, bool retryInfra)
+    {
+        if (_pending.ContainsKey(runId)) throw new InvalidOperationException("this run is already queued or executing in this process");
+        ResolvedModel model;
+        using (var db = openDb()) model = RunService.PrepareResume(db, runId, catalog, allowConfigChange: false);
+        Enqueue(runId, model, retryInfra);
     }
 
     /// <summary>Cancels a queued or running run (in-process token, plus the DB flag so the state is visible to other processes); the executor marks it Cancelled.</summary>
@@ -41,7 +50,7 @@ public sealed class RunHostService(Func<BenchDb> openDb, ILogger<RunHostService>
                 using var db = openDb();
                 var executor = new RunExecutor(ProviderFactory.Create(p.Model), p.Model, new DockerSandbox());
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(p.Cts.Token, stoppingToken);
-                await executor.ExecuteAsync(db, id, linked.Token);
+                await executor.ExecuteAsync(db, id, linked.Token, p.RetryInfra);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
