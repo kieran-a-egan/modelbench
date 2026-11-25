@@ -1,0 +1,38 @@
+{
+  "id": "instruction-following",
+  "version": 1,
+  "category": "instruction-following",
+  "mode": "SingleTurn",
+  "complexity": 1,
+  "description": "Four short tasks that are graded on following the stated output format exactly.",
+  "tasks": [
+    {
+      "prompt": "Reply with the single lowercase word that names the yellow curved fruit monkeys are famous for eating. Put it inside <answer></answer> tags and write nothing else inside the tags.",
+      "answerFormat": "Tagged",
+      "graders": [{ "type": "exact", "name": "word", "config": { "expected": "banana", "normalize": "none" } }],
+      "reference": "<answer>banana</answer>",
+      "knownBad": ["<answer>Banana</answer>", "banana"]
+    },
+    {
+      "prompt": "Return a JSON object with exactly two keys: \"name\" with the string value \"Ada\" and \"age\" with the integer value 36. Put the JSON inside <answer></answer> tags.",
+      "answerFormat": "Json",
+      "graders": [{ "type": "structural", "name": "object", "config": { "expected": { "name": "Ada", "age": 36 } } }],
+      "reference": "<answer>{\"name\":\"Ada\",\"age\":36}</answer>",
+      "knownBad": ["<answer>{\"name\":\"Ada\",\"age\":\"36\"}</answer>", "<answer>{\"name\":\"Ada\"}</answer>"]
+    },
+    {
+      "prompt": "Sort these words alphabetically: pear, apple, mango, cherry. Give a JSON array of the sorted words, in order, inside <answer></answer> tags.",
+      "answerFormat": "Json",
+      "graders": [{ "type": "structural", "name": "sorted", "config": { "expected": ["apple", "cherry", "mango", "pear"] } }],
+      "reference": "<answer>[\"apple\",\"cherry\",\"mango\",\"pear\"]</answer>",
+      "knownBad": ["<answer>[\"pear\",\"mango\",\"cherry\",\"apple\"]</answer>", "<answer>[\"apple\",\"cherry\",\"mango\"]</answer>"]
+    },
+    {
+      "prompt": "Write the integers from 1 to 5 in increasing order, separated by a comma and a single space, inside <answer></answer> tags. Nothing else may be inside the tags.",
+      "answerFormat": "Tagged",
+      "graders": [{ "type": "exact", "name": "list", "config": { "expected": "1, 2, 3, 4, 5", "normalize": "whitespace" } }],
+      "reference": "<answer>1, 2, 3, 4, 5</answer>",
+      "knownBad": ["<answer>1,2,3,4,5,6</answer>", "<answer>5, 4, 3, 2, 1</answer>"]
+    }
+  ]
+}

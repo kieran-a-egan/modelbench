@@ -9,7 +9,7 @@ namespace ModelBench.Core.Execution;
 
 public sealed record SelfTestFailure(string Family, int Complexity, int Sample, string Case, string Problem);
 
-public sealed record SelfTestReport(int Checks, IReadOnlyList<SelfTestFailure> Failures)
+public sealed record SelfTestReport(int Checks, IReadOnlyList<SelfTestFailure> Failures, int Skipped = 0)
 {
     public bool Ok => Failures.Count == 0;
 }
@@ -22,11 +22,14 @@ public static class SelfTest
 {
     public const long Seed = 20240607;
 
-    public static async Task<SelfTestReport> RunAsync(string? familyId, int samplesPerComplexity, ISandbox sandbox, CancellationToken ct)
+    public static Task<SelfTestReport> RunAsync(string? familyId, int samplesPerComplexity, ISandbox sandbox, CancellationToken ct)
+        => RunAsync(familyId is null ? FamilyRegistry.All : [FamilyRegistry.Get(familyId)], samplesPerComplexity, sandbox, ct);
+
+    public static async Task<SelfTestReport> RunAsync(IReadOnlyList<IBenchmarkFamily> families, int samplesPerComplexity, ISandbox sandbox, CancellationToken ct)
     {
-        var families = familyId is null ? FamilyRegistry.All : [FamilyRegistry.Get(familyId)];
         var failures = new List<SelfTestFailure>();
         var checks = 0;
+        var skipped = 0;
         foreach (var fam in families)
         {
             if (fam.Mode != ExecutionMode.SingleTurn) throw new NotSupportedException($"selftest of {fam.Mode} family '{fam.Id}' is not implemented yet");
@@ -34,10 +37,11 @@ public static class SelfTest
                 for (var i = 0; i < samplesPerComplexity; i++)
                 {
                     void Fail(string kase, string problem) => failures.Add(new SelfTestFailure(fam.Id, c, i, kase, problem));
-                    var task = fam.Generate(new Rng(Rng.DeriveSeed(Seed, fam.Id, fam.Version, c * 1000 + i)), c);
+                    var task = fam.Generate(new Rng(Rng.DeriveSeed(Seed, fam.Id, fam.Version, c * 1000 + i)), c, i);
                     checks++;
                     var v = fam.Validate(task);
                     if (!v.Ok) Fail("validate", string.Join("; ", v.Problems));
+                    if (task.ReferenceTurns.Count == 0) { skipped++; continue; } // file-defined task without a reference answer
 
                     var reference = await GradeAsync(task, task.ReferenceTurns, sandbox, ct);
                     checks++;
@@ -52,7 +56,7 @@ public static class SelfTest
                     }
                 }
         }
-        return new SelfTestReport(checks, failures);
+        return new SelfTestReport(checks, failures, skipped);
     }
 
     private static async Task<GradingResult> GradeAsync(GeneratedTask task, IReadOnlyList<ChatMessage> turns, ISandbox sandbox, CancellationToken ct)

@@ -26,7 +26,7 @@ public static class SuiteGenerator
             for (var i = 0; i < fs.Count; i++, index++)
             {
                 var seed = Rng.DeriveSeed(spec.MasterSeed, fam.Id, fam.Version, index);
-                var generated = fam.Generate(new Rng(seed), fs.Complexity);
+                var generated = fam.Generate(new Rng(seed), fs.Complexity, i);
                 var check = fam.Validate(generated);
                 if (!check.Ok)
                     throw new InvalidOperationException($"{fam.Id} complexity {fs.Complexity} seed {seed} failed validation: {string.Join("; ", check.Problems)}");

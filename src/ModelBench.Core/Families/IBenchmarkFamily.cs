@@ -44,6 +44,13 @@ public interface IBenchmarkFamily
     GeneratedTask Generate(Rng rng, int complexity);
 
     /// <summary>
+    /// Generate for the task at position <paramref name="index"/> within its suite-spec entry (0-based).
+    /// Procedural families ignore the index. File-defined families (static:/repo:) use it to yield their tasks in order.
+    /// SuiteGenerator and SelfTest always call this overload.
+    /// </summary>
+    GeneratedTask Generate(Rng rng, int complexity, int index) => Generate(rng, complexity);
+
+    /// <summary>
     /// Independent check of a generated task (e.g. brute-force re-solve, uniqueness, satisfiability).
     /// Must not simply call the same code path that produced the expected answer.
     /// </summary>

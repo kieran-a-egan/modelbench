@@ -6,6 +6,7 @@ public static class GraderRegistry
     {
         new ExactGrader(), new StructuralGrader(), new NumericGrader(), new TextConstraintsGrader(), new JsonSchemaGrader(),
         new CompileGrader(), new UnitTestsGrader(), new DifferentialGrader(), new PerformanceGrader(), new AstGrader(),
+        new ConstraintGrader(),
     }.ToDictionary(g => g.Type);
 
     public static IGrader Get(string type) => ByType.TryGetValue(type, out var g)

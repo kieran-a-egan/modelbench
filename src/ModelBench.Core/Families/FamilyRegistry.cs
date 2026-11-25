@@ -7,6 +7,8 @@ public static class FamilyRegistry
         new MathematicsFamily(), new InstructionFidelityFamily(), new DataTransformationFamily(),
         new PolicyEvaluationFamily(), new LongContextRetrievalFamily(),
         new CodeGenerationFamily(), new DebuggingFamily(),
+        new ConstraintSatisfactionFamily(), new DeductiveReasoningFamily(), new RepositoryComprehensionFamily(),
+        .. DefinitionLoader.Discover(),
     ];
 
     public static IBenchmarkFamily? Find(string id) => All.FirstOrDefault(f => f.Id == id);

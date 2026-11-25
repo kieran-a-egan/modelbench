@@ -16,6 +16,7 @@ internal static class SelfTestCommand
             var report = await SelfTest.RunAsync(pr.GetValue(family), 3, new DockerSandbox(), ct);
             foreach (var f in report.Failures)
                 w.WriteLine($"FAIL {f.Family} c{f.Complexity} #{f.Sample} {f.Case}: {S(f.Problem)}");
+            if (report.Skipped > 0) w.WriteLine($"skipped {report.Skipped} generated tasks that have no reference answer (grading not exercised)");
             w.WriteLine(report.Ok ? $"selftest passed ({report.Checks} checks)" : $"selftest FAILED: {report.Failures.Count} of {report.Checks} checks");
             return report.Ok ? 0 : 1;
         }));
