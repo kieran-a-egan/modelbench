@@ -104,16 +104,34 @@ def reap():
             os.waitpid(-1, 0)
         except ChildProcessError:
             break
-    for d in ("/tmp", "/dev/shm", "/dev/mqueue"):  # the writable mounts are the other state a case could leave for the next
-        for e in os.scandir(d):
-            if e.is_dir(follow_symlinks=False):
-                shutil.rmtree(e.path, ignore_errors=True)
-            else:
-                os.unlink(e.path)
-    libc = ctypes.CDLL(None)  # SysV objects outlive their creator; IPC_RMID (0) the ones the case (same uid) made
-    for name, rm in (("shm", lambda i: libc.shmctl(i, 0, None)), ("msg", lambda i: libc.msgctl(i, 0, None)), ("sem", lambda i: libc.semctl(i, 0, 0))):
-        for line in open("/proc/sysvipc/" + name).read().splitlines()[1:]:
-            rm(int(line.split()[1]))
+    try:
+        for d in ("/tmp", "/dev/shm", "/dev/mqueue"):  # the writable mounts are the other state a case could leave for the next
+            for e in os.scandir(d):
+                rm_tree(e.path)
+        libc = ctypes.CDLL(None)  # SysV objects outlive their creator; IPC_RMID (0) the ones the case (same uid) made
+        for name, rm in (("shm", lambda i: libc.shmctl(i, 0, None)), ("msg", lambda i: libc.msgctl(i, 0, None)), ("sem", lambda i: libc.semctl(i, 0, 0))):
+            for line in open("/proc/sysvipc/" + name).read().splitlines()[1:]:
+                rm(int(line.split()[1]))
+        # fail closed: anything left over would reach the next case
+        if any(os.listdir(d) for d in ("/tmp", "/dev/shm", "/dev/mqueue")) or any(len(open("/proc/sysvipc/" + n).read().splitlines()) > 1 for n in ("shm", "msg", "sem")):
+            raise OSError("state remains")
+    except Exception:  # a candidate must not be able to turn its failures into infra errors
+        global stuck
+        stuck = True
+
+
+def rm_tree(path):
+    """Same uid as the case, so a mode-000 directory is chmodded back open before it is emptied."""
+    if os.path.isdir(path) and not os.path.islink(path):
+        os.chmod(path, 0o700)
+        for e in os.scandir(path):
+            rm_tree(e.path)
+        os.rmdir(path)
+    else:
+        os.unlink(path)
+
+
+stuck = False  # set when reap() could not clear the case's state
 
 
 def fork_case(code_obj, entry, args, reps):
@@ -183,8 +201,12 @@ def main():
         else:
             code_obj = compile(req["code"], "<candidate>", "exec")
             if action == "run":
-                result["cases"] = [dict(index=i, **fork_case(code_obj, req["entryPoint"], args, req["repetitions"]))
-                                   for i, args in enumerate(req["inputs"])]
+                for i, args in enumerate(req["inputs"]):
+                    if stuck:
+                        c = {"output": None, "error": "sandbox state could not be cleared after case %d" % (i - 1), "elapsedMs": 0.0}
+                    else:
+                        c = fork_case(code_obj, req["entryPoint"], args, req["repetitions"])
+                    result["cases"].append(dict(index=i, **c))
     except SyntaxError as e:
         result["compiled"], result["compileErrors"] = False, syntax_error(e)
     except (ValueError, RecursionError, MemoryError) as e:

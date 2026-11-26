@@ -54,7 +54,10 @@ List<object> Run(byte[] image)
 {
     var entry = request.GetProperty("entryPoint").GetString()!;
     var reps = Math.Max(1, request.GetProperty("repetitions").GetInt32());
-    return request.GetProperty("inputs").EnumerateArray().Select((args, i) => (object)Case(i, image, entry, args, reps)).ToList();
+    var cases = new List<object>();
+    foreach (var (args, i) in request.GetProperty("inputs").EnumerateArray().Select((a, i) => (a, i)))
+        cases.Add(Native.Stuck ? (object)new { index = i, output = (object?)null, error = $"sandbox state could not be cleared after case {i - 1}", elapsedMs = 0.0 } : Case(i, image, entry, args, reps));
+    return cases;
 }
 
 // MB-004: candidate code runs only in a child process per case. The runner checks its exit status and is the only writer of frames.
@@ -109,9 +112,32 @@ static void Reap()
     if (Environment.ProcessId != 1) return; // only as the container's init; never signal every process of a host user
     Native.kill(-1, 9); // every process but init
     while (Native.waitpid(-1, IntPtr.Zero, 0) > 0) { }
+    try
+    {
+        ClearState();
+        // fail closed: anything left over would reach the next case
+        if (new[] { "/tmp", "/dev/shm", "/dev/mqueue" }.Any(d => Directory.EnumerateFileSystemEntries(d).Any()) || new[] { "shm", "msg", "sem" }.Any(n => File.ReadAllLines("/proc/sysvipc/" + n).Length > 1))
+            throw new IOException("state remains");
+    }
+    catch (Exception) { Native.Stuck = true; } // a candidate must not be able to turn its failures into infra errors
+}
+
+// Same uid as the case, so a mode-000 directory is chmodded back open before it is emptied.
+static void RmTree(FileSystemInfo e)
+{
+    if (e is DirectoryInfo { LinkTarget: null } d)
+    {
+        if (OperatingSystem.IsLinux()) File.SetUnixFileMode(d.FullName, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        foreach (var c in d.EnumerateFileSystemInfos()) RmTree(c);
+        d.Delete();
+    }
+    else e.Delete();
+}
+
+static void ClearState()
+{
     foreach (var dir in new[] { "/tmp", "/dev/shm", "/dev/mqueue" }) // the writable mounts are the other state a case could leave for the next
-        foreach (var e in new DirectoryInfo(dir).EnumerateFileSystemInfos())
-            try { if (e is DirectoryInfo d) d.Delete(true); else e.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        foreach (var e in new DirectoryInfo(dir).EnumerateFileSystemInfos().ToList()) RmTree(e);
     foreach (var l in File.ReadAllLines("/proc/sysvipc/shm").Skip(1)) Native.shmctl(int.Parse(l.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]), 0, IntPtr.Zero); // SysV objects outlive their creator; IPC_RMID (0) the ones the case (same uid) made
     foreach (var l in File.ReadAllLines("/proc/sysvipc/msg").Skip(1)) Native.msgctl(int.Parse(l.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]), 0, IntPtr.Zero);
     foreach (var l in File.ReadAllLines("/proc/sysvipc/sem").Skip(1)) Native.semctl(int.Parse(l.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]), 0, 0);
@@ -177,6 +203,8 @@ static object Inspect(SyntaxNode root)
 
 static class Native
 {
+    public static bool Stuck; // set when Reap() could not clear the case's state
+
     [DllImport("libc.so.6", SetLastError = true)]
     public static extern int prctl(int option, ulong arg2, ulong arg3, ulong arg4, ulong arg5);
 

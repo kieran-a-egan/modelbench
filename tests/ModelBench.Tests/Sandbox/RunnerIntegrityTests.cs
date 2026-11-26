@@ -130,6 +130,36 @@ public class RunnerIntegrityTests
         Assert.All(Enumerable.Range(0, 2), i => Assert.Equal("\"1,-,False\"", Out(r, i)));
     }
 
+    [Fact] public async Task PythonUnreadableDirectoriesAreClearedForTheNextCase()
+    {
+        var r = await Py("""
+            import os
+            def f(x):
+                seen = [os.listdir(d) for d in ("/tmp", "/dev/shm")]
+                if x == 0:
+                    for d in ("/tmp", "/dev/shm"):
+                        os.makedirs(d + "/a/b")
+                        open(d + "/a/b/f", "w").write("1")
+                        os.chmod(d + "/a/b", 0); os.chmod(d + "/a", 0)
+                return seen
+            """, "f", 10_000, "[0]", "[1]");
+        Assert.All(Enumerable.Range(0, 2), i => Assert.Equal("[[],[]]", Out(r, i)));
+    }
+
+    [Fact] public async Task CSharpUnreadableDirectoriesAreClearedForTheNextCase()
+    {
+        var r = await Cs("""
+            public static class S { public static string F(int x) {
+                var seen = string.Join(",", new[] { "/tmp", "/dev/shm" }.Select(d => Directory.GetFileSystemEntries(d).Length));
+                if (x == 0) foreach (var d in new[] { "/tmp", "/dev/shm" }) {
+                    Directory.CreateDirectory(d + "/a/b");
+                    File.WriteAllText(d + "/a/b/f", "1");
+                    File.SetUnixFileMode(d + "/a/b", 0); File.SetUnixFileMode(d + "/a", 0); }
+                return seen; } }
+            """, "S.F", 10_000, "[0]", "[1]");
+        Assert.All(Enumerable.Range(0, 2), i => Assert.Equal("\"0,0\"", Out(r, i)));
+    }
+
     [Fact] public async Task PythonPrematureExitFailsOnlyItsOwnCase()
     {
         var r = await Py("""
