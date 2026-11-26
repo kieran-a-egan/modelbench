@@ -136,8 +136,8 @@ public class SandboxAdversarialTests
     public async Task MemoryBomb()
     {
         var r = await Py("def f():\n    return len(bytearray(b'\\x01') * (1 << 30))\n");
-        var contained = r.Cases.Count == 1 && r.Cases[0].Error is { } e && e.Contains("MemoryError")
-                        || r.Cases.Count == 0 && r.ExitCode == 137;
+        // MemoryError, or the OOM killer takes the case process (never the runner): either way only this case fails.
+        var contained = r.Cases.Count == 1 && r.Cases[0].Error is { } e && (e.Contains("MemoryError") || e.Contains("killed by signal 9"));
         Assert.True(contained, $"exit {r.ExitCode}, cases {r.Cases.Count}");
     }
 
@@ -165,8 +165,8 @@ public class SandboxAdversarialTests
             """, "f", 20_000);
         Assert.True(r.StdErrTail.Length <= 2000);
         Assert.False(r.TimedOut);
-        // The 50 MB on fd 1 pushed the result frame past the 1 MB capture: the host sees no valid frame.
-        Assert.Empty(r.Cases);
+        // The case's fd 1 and 2 are /dev/null, so the 50 MB cannot push the runner's frame past the 1 MB capture.
+        Assert.Equal("1", Out(r));
         Assert.InRange(sw.Elapsed.TotalSeconds, 0, 40);
     }
 
@@ -192,8 +192,7 @@ public class SandboxAdversarialTests
         Assert.Null(raises.Cases[0].Output);
 
         var exits = await Py(forged + "\ndef f():\n    forge()\n    os._exit(0)\n");
-        Assert.Empty(exits.Cases);
-        Assert.False(exits.Compiled);
+        Assert.Equal("case process produced no result", Assert.Single(exits.Cases).Error);
     }
 
     [Fact]

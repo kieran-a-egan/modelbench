@@ -10,8 +10,8 @@ namespace ModelBench.Core.Sandbox;
 /// <summary>Runs candidate code in a locked-down container per request (ADR 0003).</summary>
 public sealed class DockerSandbox : ISandbox
 {
-    public const string PythonImage = "modelbench-python:1";
-    public const string DotnetImage = "modelbench-dotnet:1";
+    public const string PythonImage = "modelbench-python:2";
+    public const string DotnetImage = "modelbench-dotnet:2";
     internal const int OutputCap = 1 << 20;
     private const int GraceMs = 5_000;
 
@@ -94,7 +94,7 @@ public sealed class DockerSandbox : ISandbox
                     ? $"Sandbox image {image} is missing. Run `modelbench sandbox build`."
                     : $"docker run failed (exit 125): {tail}", false);
 
-            var result = timedOut ? null : ParseFrame(Encoding.UTF8.GetString(outBytes), nonce);
+            var result = timedOut ? null : ParseFrame(Encoding.UTF8.GetString(outBytes), nonce, exit);
             // No valid frame: the candidate crashed, was OOM-killed (137) or timed out. That is a model failure.
             return result is null
                 ? new SandboxResult(false, null, [], null, timedOut, exit, tail)
@@ -119,8 +119,10 @@ public sealed class DockerSandbox : ISandbox
         return kept.ToArray();
     });
 
-    internal static SandboxResult? ParseFrame(string stdout, string nonce)
+    internal static SandboxResult? ParseFrame(string stdout, string nonce, int exitCode)
     {
+        // The runner always exits 0 after writing its frame; any other exit means it did not finish, whatever stdout holds.
+        if (exitCode != 0) return null;
         var prefix = $"MBRESULT:{nonce}:";
         // The runner writes exactly one frame. More than one means candidate code learned the nonce and wrote its own (MB-004): unusable.
         var frames = stdout.Split('\n').Where(l => l.StartsWith(prefix, StringComparison.Ordinal)).Take(2).ToList();

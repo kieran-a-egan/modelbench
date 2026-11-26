@@ -1,4 +1,4 @@
-import ast, base64, io, json, os, sys, time
+import ast, base64, ctypes, io, json, os, select, shutil, signal, sys, time
 
 CAP = 1 << 20
 MAX_ERR = 500
@@ -70,36 +70,102 @@ def inspect_code(code):
             "calledNames": sorted(calls), "hasLoop": loop, "recursiveFunctions": recursive}
 
 
-def run_cases(req, code_obj):
-    n = len(req["inputs"])
-    fn = None
+def run_case(code_obj, entry, args, reps):
+    """Runs in the case's child process: fresh module state, no path to the runner's stdout."""
     try:
         ns = {"__name__": "candidate"}
         exec(code_obj, ns)
-        fn = ns.get(req["entryPoint"])
+        fn = ns.get(entry)
         if not callable(fn):
-            raise NameError("entry point '%s' not found" % req["entryPoint"])
+            raise NameError("entry point '%s' not found" % entry)
+        best = None
+        for _ in range(max(1, reps)):
+            t = time.perf_counter()
+            out = fn(*args)
+            dt = (time.perf_counter() - t) * 1000
+            best = dt if best is None else min(best, dt)
+        return {"output": norm(out), "error": None, "elapsedMs": best or 0.0}
+    except Unserialisable as e:
+        return {"output": None, "error": "unserialisable output: %s" % e, "elapsedMs": 0.0}
     except Exception as e:
-        return [{"index": i, "output": None, "error": err(e), "elapsedMs": 0.0} for i in range(n)]
-    cases = []
-    for i, args in enumerate(req["inputs"]):
-        best, out, error = None, None, None
+        return {"output": None, "error": err(e), "elapsedMs": 0.0}
+
+
+def reap():
+    """The runner is PID 1, so it inherits a case's leftover processes: stop and reap them, and clear /tmp, so nothing outlives its case."""
+    if os.getpid() != 1:
+        return  # only as the container's init; never signal every process of a host user
+    try:
+        os.kill(-1, signal.SIGKILL)  # every process but init
+    except ProcessLookupError:
+        pass
+    while True:
         try:
-            for _ in range(max(1, req["repetitions"])):
-                t = time.perf_counter()
-                out = fn(*args)
-                dt = (time.perf_counter() - t) * 1000
-                best = dt if best is None else min(best, dt)
-            out = norm(out)
-        except Unserialisable as e:
-            out, error = None, "unserialisable output: %s" % e
-        except Exception as e:
-            out, error = None, err(e)
-        cases.append({"index": i, "output": out, "error": error, "elapsedMs": best or 0.0})
-    return cases
+            os.waitpid(-1, 0)
+        except ChildProcessError:
+            break
+    for e in os.scandir("/tmp"):  # the tmpfs is the other state a case could leave for the next
+        if e.is_dir(follow_symlinks=False):
+            shutil.rmtree(e.path, ignore_errors=True)
+        else:
+            os.unlink(e.path)
+
+
+def fork_case(code_obj, entry, args, reps):
+    """MB-004: candidate code runs only in a child. The runner checks its exit status and is the only writer of frames."""
+    r, w = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        try:
+            null = os.open(os.devnull, os.O_RDWR)
+            for fd in (0, 1, 2):
+                os.dup2(null, fd)
+            os.dup2(w, 3)
+            os.closerange(4, 1 << 16)  # drops the runner's stdout dup and the read end
+            sys.stdout, sys.stderr = Capped(), Capped()
+            data = json.dumps(run_case(code_obj, entry, args, reps), separators=(",", ":")).encode()
+            while data:
+                data = data[os.write(3, data):]
+            os._exit(0)
+        finally:
+            os._exit(1)
+    os.close(w)
+    chunks, size, status = [], 0, None
+    while True:
+        if select.select([r], [], [], 0.05)[0]:
+            b = os.read(r, 65536)
+            if not b:
+                break
+            if size < CAP:
+                chunks.append(b)
+                size += len(b)
+        elif status is None:
+            done, st = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status = st
+                reap()  # the case's own children may still hold the pipe open; stopping them ends it
+    os.close(r)
+    if status is None:
+        status = os.waitpid(pid, 0)[1]
+    reap()
+    if os.WIFSIGNALED(status):
+        return {"output": None, "error": "case process killed by signal %d" % os.WTERMSIG(status), "elapsedMs": 0.0}
+    if os.WEXITSTATUS(status) != 0:
+        return {"output": None, "error": "case process exited with status %d" % os.WEXITSTATUS(status), "elapsedMs": 0.0}
+    try:
+        c = json.loads(b"".join(chunks)[:CAP])
+        output, error, elapsed = c["output"], c["error"], c["elapsedMs"]
+        if not (error is None or isinstance(error, str)) or isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)):
+            raise ValueError
+        return {"output": output, "error": error if error is None else error[:MAX_ERR], "elapsedMs": float(elapsed)}
+    except Exception:
+        return {"output": None, "error": "case process produced no result", "elapsedMs": 0.0}
 
 
 def main():
+    # Not dumpable: case processes run as the same user but cannot open /proc/1/fd/1 or /proc/1/mem to reach the frame stream.
+    if ctypes.CDLL(None).prctl(4, 0, 0, 0, 0) != 0:  # PR_SET_DUMPABLE
+        raise OSError("prctl(PR_SET_DUMPABLE) failed")
     req = json.loads(sys.stdin.read())
     real = os.fdopen(os.dup(1), "w")
     nonce = req["nonce"]
@@ -112,7 +178,8 @@ def main():
         else:
             code_obj = compile(req["code"], "<candidate>", "exec")
             if action == "run":
-                result["cases"] = run_cases(req, code_obj)
+                result["cases"] = [dict(index=i, **fork_case(code_obj, req["entryPoint"], args, req["repetitions"]))
+                                   for i, args in enumerate(req["inputs"])]
     except SyntaxError as e:
         result["compiled"], result["compileErrors"] = False, syntax_error(e)
     except (ValueError, RecursionError, MemoryError) as e:

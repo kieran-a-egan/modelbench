@@ -166,8 +166,9 @@ Every grader compares JSON numbers with `CodeSupport.NumberEqual` (MB-007). With
 
 `DockerSandbox` drives the `docker` CLI and talks to the in-container runner over a simple protocol:
 - It pipes the request JSON (code, entryPoint, inputs, action, repetitions, nonce) to the container's **stdin** (`docker run -i`). Nothing is mounted. The runner reads stdin fully before loading candidate code.
-- The runner prints one line, `MBRESULT:<nonce>:<base64 json>`. The nonce is random per execution. The host requires **exactly one** such line, and case indices `0..n-1` in order; anything else is an unusable (crashed) result, never a pass (MB-004).
-- Images are `modelbench-python:1` and `modelbench-dotnet:1`.
+- The runner never executes candidate code itself (#3). Each case runs in a fresh child process (Python `fork`, C# `Runner.dll --case`) that returns `{output, error, elapsedMs}` on a private pipe, with every other descriptor on `/dev/null`. The runner checks each child's exit status (`case process exited with status N`, `killed by signal N`, `produced no result`), assigns the index itself, then kills and reaps leftover processes and empties `/tmp` before the next case. It is PID 1 and calls `prctl(PR_SET_DUMPABLE, 0)`, so a case cannot reach its stdout through `/proc/1`.
+- The runner prints one line, `MBRESULT:<nonce>:<base64 json>`. The nonce is random per execution. The host requires **exactly one** such line, a container exit code of 0, and case indices `0..n-1` in order; anything else is an unusable (crashed) result, never a pass (MB-004).
+- Images are `modelbench-python:2` and `modelbench-dotnet:2`. The tag changes whenever the runner protocol does, so a stale image fails as missing rather than running an old runner.
 - Container flags: `--rm --network none --read-only --tmpfs /tmp:rw,size=64m --memory 256m --memory-swap 256m --cpus 1 --pids-limit 64 --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 -e HOME=/tmp -i`.
 - The host enforces a wall-clock limit of `TimeoutMs` + 5 s grace by running `docker kill`, and caps captured output at 1 MB.
 
