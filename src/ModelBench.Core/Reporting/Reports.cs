@@ -122,7 +122,7 @@ public static class Reports
         // Comparable only within one suite hash AND one grading methodology.
         return runs.GroupBy(r => (r.Suite!.ContentHash, r.GradingVersion))
             .Select(g => new LeaderboardGroup(g.First().Suite!.Name, g.Key.ContentHash, g.Select(r => Summarize(db, r.Id))
-                .OrderByDescending(s => s.EndToEndRate ?? -1).ThenByDescending(s => s.PassRate ?? -1).ThenByDescending(s => s.MeanScore ?? -1)
+                .OrderByDescending(s => s.Completion == 1).ThenByDescending(s => s.EndToEndRate ?? -1).ThenByDescending(s => s.PassRate ?? -1).ThenByDescending(s => s.MeanScore ?? -1)
                 .ThenBy(s => s.ModelRef, StringComparer.Ordinal).ThenByDescending(s => s.CreatedAt).ToList(), g.Key.GradingVersion))
             .OrderBy(g => g.SuiteName, StringComparer.Ordinal).ThenBy(g => g.SuiteHash, StringComparer.Ordinal).ThenByDescending(g => g.GradingVersion).ToList();
     }

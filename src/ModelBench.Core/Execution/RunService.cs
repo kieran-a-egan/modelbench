@@ -46,6 +46,8 @@ public static class RunService
     {
         var run = db.Runs.SingleOrDefault(r => r.Id == runId) ?? throw new InvalidOperationException($"run {runId} not found");
         if (run.Mode == ExecutionMode.Manual) throw new InvalidOperationException("manual runs are completed with 'manual import'");
+        if (run.GradingVersion != GradingPipeline.Version)
+            throw new InvalidOperationException($"run {runId} was graded with methodology v{run.GradingVersion}; this build grades with v{GradingPipeline.Version}, so resuming would mix them. Start a new run.");
         // Early, friendly refusal; RunExecutor's atomic lease acquisition is what actually prevents a double execution.
         if (run.LeaseOwner is not null && run.LeaseExpiresMs > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             throw new RunLeaseException($"run {runId} is being executed by another process; wait for it, or cancel it with 'run cancel'");

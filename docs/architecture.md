@@ -148,7 +148,7 @@ Grader type ids (`GraderSpec.Type`) and their `Config`:
 | `compile` | `{ language: "python"\|"csharp", entryPoint }` | `compiles` |
 | `unit-tests` | `{ language, entryPoint, cases: [{ args: [..], expected: json }], tolerance?: number }` | one per case, `case[i]` |
 | `differential` | same shape as unit-tests; cases are seeded random inputs whose expected values come from the host reference solver | one per case, `random[i]` |
-| `performance` | `{ language, entryPoint, args: [..], expected: json, budgetMs: number }`. Runs the case alone with the sandbox `TimeoutMs = budgetMs`. Within-budget means a **correct** output (MB-003), not killed, and **host** wall time within the budget; in-container timings are informational only, because candidate code can forge them. Host wall time depends on load, so the verdict is empirical: `code-generation` emits this grader with weight 0, not required (MB-002), and regrade does not compare `within-budget` | `correct`, `within-budget` |
+| `performance` | `{ language, entryPoint, args: [..], expected: json, budgetMs: number }`. Runs the case alone with the sandbox `TimeoutMs = budgetMs`. Within-budget means a **correct** output (MB-003), not killed, and **host** wall time within the budget; in-container timings are informational only, because candidate code can forge them. Host wall time depends on load, so the verdict is empirical: `code-generation` emits this grader with weight 0, not required (MB-002), and regrade skips unscored assertions | `correct`, `within-budget` |
 | `ast` | `{ language, rules: [{ kind: "defines"\|"forbids-import"\|"forbids-call"\|"requires-loop"\|"forbids-recursion", name? }] }` | one per rule |
 | `tool-calls` | `{ required: [{ name, args?: json-subset }], ordered?: bool, forbidden?: [name], maxCalls?: int }`. `called[i]` and `order` credit only **executed** calls (not on the transcript's last message, which the step limit leaves unexecuted, and arguments within 64 KB; the same rule as regrade's replay). `forbidden` and `max-calls` count every **requested** call (MB-008) | `called[i]:name` per requirement, `order`, `forbidden:name`, `max-calls` |
 | `env-state` | `{ expected: json-subset }`, flattened to leaf paths (object keys joined by `.`, array items as `[i]`) and compared by deep equality with the final environment state; `{"path": null}` asserts absence; a null state fails every assertion | one per leaf path |
@@ -160,7 +160,7 @@ Every grader compares JSON numbers with `CodeSupport.NumberEqual` (MB-007). With
 
 `GradingPipeline.Version` names the grading methodology and is stored on every run (`Run.GradingVersion`; runs that predate it are v1). Bump it whenever a change can move an existing attempt's score or outcome. The leaderboard groups by (suite hash, grading version), `compare` refuses runs with different versions, and `regrade` refuses a run graded with another version.
 
-`modelbench run regrade <id> [--check]` (`Execution/Regrader.cs`) re-runs the pipeline on every stored Passed/Failed attempt from its stored transcript plus the task's PromptJson/HiddenJson. For tool and agentic attempts the final environment state is rebuilt by replaying the transcript's tool calls into a fresh `family.CreateEnvironment(hidden)`. It compares assertions (grader, name, expected, actual, score, passed), the attempt score and the outcome, reports differences, and never writes. Unscored `performance/within-budget` assertions are skipped, because host wall time is not reproducible. With `--check` it exits non-zero on any difference (AC-01). Code families need the sandbox.
+`modelbench run regrade <id> [--check]` (`Execution/Regrader.cs`) re-runs the pipeline on every stored Passed/Failed attempt from its stored transcript plus the task's PromptJson/HiddenJson. For tool and agentic attempts the final environment state is rebuilt by replaying the transcript's tool calls into a fresh `family.CreateEnvironment(hidden)`. It compares assertions (grader, name, expected, actual, score, passed), the attempt score and the outcome, reports differences, and never writes. Unscored assertions (weight 0, not required; the performance grader's) are skipped, because host wall time is not reproducible. With `--check` it exits non-zero on any difference (AC-01). Code families need the sandbox.
 
 ## Sandbox (ADR 0003)
 
@@ -184,7 +184,7 @@ Per attempt, summed over the episode's model calls:
 - `energy_kwh` and `energy_cost_usd`: Estimated from duration × `Energy.Watts` and the price.
 
 Run level:
-- **end-to-end rate**: passes / (graded + timeouts). Timeouts are the model's own budget exhaustion, so they count as failures. This ranks the leaderboard (MB-001)
+- **end-to-end rate**: passes / (graded + timeouts). Timeouts are the model's own budget exhaustion, so they count as failures. This ranks the leaderboard, complete runs (no infra errors or cancellations) first (MB-001)
 - **graded pass rate** and mean score, over graded attempts only
 - **completion**: (graded + timeouts) / attempts. Below 1 means infra errors or cancellations hid part of the run
 - **consistency**: the fraction of tasks with the same pass/fail outcome on every repeat

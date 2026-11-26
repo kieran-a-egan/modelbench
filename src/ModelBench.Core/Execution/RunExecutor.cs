@@ -212,7 +212,7 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         attempt.CompletedAt = DateTimeOffset.UtcNow;
         // A failed try, or a replaced earlier attempt, consumed usage nobody recorded: report usage Unavailable, never a partial sum.
         attempt.Metrics.AddRange(MetricCalculator.Compute(episode?.Responses ?? [], inference ?? sw.Elapsed, model.Pricing, model.Energy,
-            usageComplete: attempt.Retries == 0 && !replacesPrior));
+            usageComplete: episode is not null && attempt.Retries == 0 && !replacesPrior));
         return attempt;
     }
 }

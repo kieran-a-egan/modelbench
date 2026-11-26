@@ -164,7 +164,7 @@ The `manual` provider entry in `models.json` needs no URL or key.
 `run show` prints, in order:
 
 - **Attempt outcomes**: `Passed`, `Failed` (a model failure: wrong or malformed answer, never retried), `InfraError` (provider or sandbox failure after retries), `Timeout`, `Cancelled`, `Pending`. InfraError, Timeout and Cancelled are **excluded** from the graded pass rate, mean score and consistency, and are counted separately so a flaky server cannot masquerade as a weak model.
-- **End-to-end rate**: passes / (graded + timeouts). A timeout is the model running out of its own time budget, so it counts as a failure here. The leaderboard ranks by this, so a model that times out on most tasks cannot rank above one that answers them.
+- **End-to-end rate**: passes / (graded + timeouts). A timeout is the model running out of its own time budget, so it counts as a failure here. The leaderboard ranks complete runs (no infra errors or cancellations) first, then by this, so a model that times out on most tasks cannot rank above one that answers them.
 - **Completion**: (graded + timeouts) / attempts. Below 100% means infra errors or cancellations hid part of the run; treat such a run's numbers with care.
 - **Graded pass rate and mean score.** An attempt passes when every required assertion passes. Its score is the weighted mean of its assertion scores, so a partially right answer scores between 0 and 1. The `answer-format` assertion is required but weighs 0: it can fail an attempt without inflating a wrong answer's score.
 - **Consistency**: the fraction of tasks with the same pass/fail result on every repeat. It only means something with `--repeats` of 2 or more.

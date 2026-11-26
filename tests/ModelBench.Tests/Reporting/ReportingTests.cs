@@ -42,7 +42,8 @@ public class ReportingTests
         var f = Reports.Summarize(db, flaky.Id);
         Assert.Equal((1.0, 1.0, 0.5), (f.PassRate, f.EndToEndRate, f.Completion)); // infra/cancel are not the model's fault, but are disclosed
 
-        Assert.Equal(["m/infra", "m/solid", "m/times-out"], Reports.Leaderboard(db, ST).Single().Rows.Select(r => r.ModelRef).ToArray());
+        // Complete runs rank first: m/infra has the best rate but only half of its attempts are accountable.
+        Assert.Equal(["m/solid", "m/times-out", "m/infra"], Reports.Leaderboard(db, ST).Single().Rows.Select(r => r.ModelRef).ToArray());
     }
 
     [Fact] public void RunsGradedWithDifferentMethodologiesAreNeverRankedOrComparedTogether()

@@ -230,6 +230,35 @@ public class ConcurrencyAndResumeTests
         static FakeReply SlowError() { Thread.Sleep(300); return FakeReply.Error(500); }
     }
 
+    [Fact] public async Task UnfinishedEpisodeReportsUsageUnavailableNotMeasuredZero()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        await using var server = await FakeServer.StartAsync((_, _) => FakeReply.Error(401));
+        var suite = TestKit.MakeSuite(db, 1);
+        var model = TestKit.Model(server.BaseUrl);
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null);
+        await Exec(model).ExecuteAsync(db, run.Id, default);
+
+        var a = db.Attempts.AsNoTracking().Include(x => x.Metrics).Single(x => x.RunId == run.Id);
+        Assert.Equal(AttemptOutcome.InfraError, a.Outcome);
+        Assert.Equal(Provenance.Unavailable, a.Metrics.Single(m => m.Name == MetricNames.ModelCalls).Provenance);
+    }
+
+    [Fact] public async Task ResumeIsRefusedForARunGradedWithAnotherMethodology()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        await using var server = await FakeServer.StartAsync((_, _) => FakeReply.Text("x"));
+        var suite = TestKit.MakeSuite(db, 1);
+        var run = RunService.CreateRun(db, suite.Id, TestKit.Model(server.BaseUrl), ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null);
+        run.GradingVersion = 1;
+        db.SaveChanges();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => RunService.PrepareResume(db, run.Id, ModelCatalog.Parse(TestKit.ModelsJson(server.BaseUrl))));
+        Assert.Contains("would mix them", ex.Message);
+    }
+
     [Fact] public async Task ModifiedSuiteIsRefused()
     {
         using var dir = new TempDir();

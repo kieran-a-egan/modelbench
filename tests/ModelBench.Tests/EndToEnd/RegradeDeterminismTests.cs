@@ -51,6 +51,11 @@ public class RegradeDeterminismTests
         Assert.Equal((AttemptOutcome.Passed, 1.0), (stored.Outcome, stored.Score));
         Assert.True(stored.Assertions.Single(a => a.Name == "within-budget").Passed);
 
+        // The unscored "correct" assertion is not compared either: a kill at the budget under load would flip it.
+        var correct = db.Assertions.Single(a => a.AttemptId == stored.Id && a.Name == "correct");
+        correct.Passed = false;
+        db.SaveChanges();
+
         var slow = new SlowHost(sandbox, perf.Config.GetProperty("budgetMs").GetInt32() + 200);
         var report = await Regrader.RunAsync(db, run.Id, slow, CancellationToken.None);
         Assert.Empty(report.Differences);

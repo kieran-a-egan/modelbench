@@ -45,8 +45,8 @@ public static class Regrader
             for (var i = 0; i < Math.Min(stored.Count, graded.Assertions.Count); i++)
             {
                 var (s, n) = (stored[i], graded.Assertions[i]);
-                // ponytail: within-budget is host wall time, empirical by design (MB-002) and unscored, so it is not compared.
-                if (s.Grader == "performance" && s.Name == "within-budget" && s.Weight == 0 && n.Name == s.Name) continue;
+                // Unscored assertions (Weight 0, not Required) cannot move Score or Passed and may be host-load dependent (MB-002), so they are not compared.
+                if (s.Weight == 0 && !s.Required) continue;
                 if (s.Grader != n.Grader || s.Name != n.Name || s.Expected != n.Expected || s.Actual != n.Actual || s.Score != n.Score || s.Passed != n.Passed)
                     problems.Add($"assertion {i} '{s.Name}': stored (expected [{s.Expected}] actual [{s.Actual}] score {s.Score} passed {s.Passed}) vs regraded (expected [{n.Expected}] actual [{n.Actual}] score {n.Score} passed {n.Passed})");
             }

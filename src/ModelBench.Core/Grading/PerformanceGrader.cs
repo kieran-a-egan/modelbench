@@ -12,7 +12,7 @@ namespace ModelBench.Core.Grading;
 /// so a slow run can finish after the budget without being killed; within-budget therefore requires both "not TimedOut" and
 /// measured wall time &lt;= budgetMs, and a correct output. In-container elapsedMs is forgeable by candidate code and appears only in the diagnostic.
 /// Wall time depends on host load, so the verdict is empirical, not reproducible (MB-002): families emit this grader with
-/// Weight 0 and Required false, so it is reported but never moves Score or Passed, and Regrader does not compare within-budget.
+/// Weight 0 and Required false, so it is reported but never moves Score or Passed, and Regrader skips every unscored assertion (Weight 0, not Required), including correct.
 /// </summary>
 public sealed class PerformanceGrader : IGrader
 {

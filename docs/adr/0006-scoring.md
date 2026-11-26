@@ -13,6 +13,6 @@
 - Performance assertions run a large input under a host-enforced wall-clock budget, including container start-up. The budget is at least 5× the time an asymptotically correct solution needs. Input sizes are chosen so the wrong complexity class misses the budget by at least 10×. In-container timings are recorded for information only.
 
 ## Consequences
-- Performance results can flip on an overloaded host, so they are informational only, and re-grading skips `within-budget`.
+- Performance results can flip on an overloaded host, so they are informational only, and re-grading skips every unscored assertion (weight 0, not required).
 - Re-grading stored responses is otherwise bit-for-bit deterministic. This is covered by a test, including one that regrades on a host slow enough to miss every budget.
 - A correct but inefficient solution now passes a code task; its inefficiency shows only in the reported `within-budget` assertion.
