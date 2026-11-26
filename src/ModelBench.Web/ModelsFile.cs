@@ -52,7 +52,7 @@ public sealed class ModelsFile(string? configuredPath)
                         if ((string?)h[key] == Mask) h[key] = Original((orig?["headers"] as JsonObject)?[key], $"provider '{id}' header '{key}'");
             }
             var json = root.ToJsonString(Indented);
-            ModelCatalog.Parse(json).List(); // validates providers, models and api kinds
+            ModelCatalog.Parse(json).List(); // validates providers and models; non-local apis are skipped and shown on the page
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
             File.WriteAllText(Path, json);
             return null;

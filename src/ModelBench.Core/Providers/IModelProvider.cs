@@ -6,8 +6,7 @@ public sealed record ModelRequest(IReadOnlyList<ChatMessage> Messages, IReadOnly
 
 /// <summary>
 /// Token counts exactly as reported by the provider; null = not reported (never estimated).
-/// OutputTokens INCLUDES reasoning tokens (cost is computed on that basis): adapters whose API reports them separately
-/// (Gemini: candidatesTokenCount + thoughtsTokenCount) add them. Anthropic reports no separate reasoning count (null).
+/// OutputTokens INCLUDES reasoning tokens (cost is computed on that basis), as OpenAI-compatible servers report them.
 /// </summary>
 public sealed record Usage(long? InputTokens, long? OutputTokens, long? ReasoningTokens)
 {
@@ -27,9 +26,7 @@ public sealed record ModelResponse(
     /// <summary>Exact request body sent (secrets never appear in bodies; headers are not recorded).</summary>
     string RawRequest,
     /// <summary>Raw response body (or concatenated SSE data lines).</summary>
-    string RawResponse,
-    /// <summary>Provider-native assistant content to replay verbatim (see ChatMessage.ProviderState); null if the API needs none.</summary>
-    string? ProviderState = null);
+    string RawResponse);
 
 /// <summary>
 /// One adapter per API kind. Throws InfraException for transport errors, HTTP 408/429/5xx (Retryable=true)

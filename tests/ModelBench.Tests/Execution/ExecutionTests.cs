@@ -76,7 +76,7 @@ public class RunServiceTests
     {
         using var dir = new TempDir();
         using var db = dir.OpenDb();
-        Assert.Throws<InvalidOperationException>(() => RunService.CreateRun(db, Guid.NewGuid(), TestKit.Model("http://x"), ExecutionMode.SingleTurn, 1, 10, new RetryPolicy(), null));
+        Assert.Throws<InvalidOperationException>(() => RunService.CreateRun(db, Guid.NewGuid(), TestKit.Model("http://127.0.0.1:9/v1"), ExecutionMode.SingleTurn, 1, 10, new RetryPolicy(), null));
     }
 
     [Fact] public void SnapshotsSettingsWithoutSecrets()
@@ -84,7 +84,7 @@ public class RunServiceTests
         using var dir = new TempDir();
         using var db = dir.OpenDb();
         var suite = TestKit.MakeSuite(db, 1);
-        var run = RunService.CreateRun(db, suite.Id, TestKit.Model("http://x", apiKey: "sk-top-secret"), ExecutionMode.SingleTurn, 2, 30, new RetryPolicy(5, 10, 20), "lbl");
+        var run = RunService.CreateRun(db, suite.Id, TestKit.Model("http://127.0.0.1:9/v1", apiKey: "sk-top-secret"), ExecutionMode.SingleTurn, 2, 30, new RetryPolicy(5, 10, 20), "lbl");
         Assert.DoesNotContain("sk-top-secret", run.ModelSnapshotJson);
         Assert.Contains("\"reasoningEffort\":\"low\"", run.ModelSnapshotJson);
         Assert.Contains("\"maxTokensField\":\"max_tokens\"", run.ModelSnapshotJson);
@@ -291,7 +291,7 @@ public class ManualExchangeTests
         using var dir = new TempDir();
         using var db = dir.OpenDb();
         var suite = TestKit.MakeSuite(db, 3);
-        var model = ModelCatalog.Parse(TestKit.ModelsJson("http://unused")).Resolve("manual/chat-ui");
+        var model = ModelCatalog.Parse(TestKit.ModelsJson("http://127.0.0.1:9/v1")).Resolve("manual/chat-ui");
         var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.Manual, 1, 60, new RetryPolicy(), "manual");
         var outDir = dir.File("out");
 
@@ -340,7 +340,7 @@ public class ManualExchangeTests
         using var dir = new TempDir();
         using var db = dir.OpenDb();
         var suite = TestKit.MakeSuite(db, 1);
-        var run = RunService.CreateRun(db, suite.Id, TestKit.Model("http://x"), ExecutionMode.SingleTurn, 1, 5, new RetryPolicy(), null);
+        var run = RunService.CreateRun(db, suite.Id, TestKit.Model("http://127.0.0.1:9/v1"), ExecutionMode.SingleTurn, 1, 5, new RetryPolicy(), null);
         Assert.Throws<InvalidOperationException>(() => ManualExchange.Export(db, run.Id, dir.File("o")));
     }
 }

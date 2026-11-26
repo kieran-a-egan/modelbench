@@ -10,7 +10,7 @@ namespace ModelBench.Cli.Commands;
 internal sealed class CliContext
 {
     public Option<string?> Db { get; } = new("--db") { Description = "SQLite database path (default: MODELBENCH_DB, then ~/.modelbench/modelbench.db)", Recursive = true };
-    public Option<string?> Models { get; } = new("--models") { Description = "models.json path (default: ./models.json, then ~/.modelbench/models.json)", Recursive = true };
+    public Option<string?> Models { get; } = new("--models") { Description = "models.json path (default: MODELBENCH_MODELS, then ./models.json, then ~/.modelbench/models.json)", Recursive = true };
 
     public BenchDb OpenDb(ParseResult pr) => BenchDb.Open(DbPaths.Resolve(pr.GetValue(Db)));
 

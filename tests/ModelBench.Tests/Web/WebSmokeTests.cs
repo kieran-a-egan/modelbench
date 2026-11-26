@@ -23,7 +23,7 @@ public sealed class WebFixture : IDisposable
 
     public WebFixture()
     {
-        File.WriteAllText(Dir.File("models.json"), TestKit.ModelsJson("http://unused", "sk-test-SECRET"));
+        File.WriteAllText(Dir.File("models.json"), TestKit.ModelsJson("http://127.0.0.1:9/v1", "sk-test-SECRET"));
         using (var db = Dir.OpenDb())
         {
             Suite = ReportSeed.AddSuite(db, "smoke");
@@ -119,7 +119,7 @@ public class WebSmokeTests(WebFixture fx) : IClassFixture<WebFixture>
     [Fact] public void ModelsFileRestoresMaskedSecretsOnSave()
     {
         using var dir = new TempDir();
-        File.WriteAllText(dir.File("models.json"), TestKit.ModelsJson("http://unused", "sk-test-SECRET"));
+        File.WriteAllText(dir.File("models.json"), TestKit.ModelsJson("http://127.0.0.1:9/v1", "sk-test-SECRET"));
         var f = new ModelsFile(dir.File("models.json"));
         var masked = f.MaskedText();
         Assert.DoesNotContain("sk-test-SECRET", masked);
@@ -127,7 +127,7 @@ public class WebSmokeTests(WebFixture fx) : IClassFixture<WebFixture>
         var saved = File.ReadAllText(dir.File("models.json"));
         Assert.Contains("sk-test-SECRET", saved);
         Assert.Contains("256", saved);
-        Assert.NotNull(f.Save("{\"providers\":{\"x\":{\"api\":\"nope\",\"models\":[{\"id\":\"a\"}]}}}")); // invalid api: rejected
+        Assert.NotNull(f.Save("{\"providers\":{\"x\":{\"api\":\"openai-completions\"}}}")); // invalid: no models array
         Assert.Contains("sk-test-SECRET", File.ReadAllText(dir.File("models.json")));
         Assert.NotNull(f.Save(masked.Replace("\"fake\"", "\"renamed\""))); // no original value to restore for a renamed provider
     }

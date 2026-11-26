@@ -6,7 +6,7 @@
 |---|---|---|
 | Host process (Cli/Web/Core) | trusted | generators, reference solvers, graders, hidden data, API keys (in memory only) |
 | SQLite DB | trusted storage, but holds **untrusted content** | candidate responses, transcripts |
-| Remote/local model endpoints | semi-trusted transport, **untrusted output** | candidate text, tool calls |
+| Local model endpoints | semi-trusted transport, **untrusted output** | candidate text, tool calls |
 | Sandbox container | **untrusted** | candidate code + test inputs |
 | Browser (dashboard) | local user | renders untrusted content |
 
@@ -42,4 +42,4 @@
 ## Residual risks
 - Kernel-level container escapes are out of scope. Docker Desktop's VM isolation on Windows adds a layer of protection.
 - Performance assertions depend on host load (ADR 0006).
-- Remote providers see benchmark prompts. Publicly exposing a suite risks contamination, so prefer fresh seeds.
+- Only local model servers are supported, so prompts do not leave the machine (or network) running the server. This is enforced, not assumed: the catalog refuses an `openai-completions` endpoint unless its host is loopback or a private-network address (`LocalEndpoint.Check`), and the provider's HTTP client re-checks the resolved address on every connection (`LocalEndpoint.ConnectAsync`), with proxies and redirects disabled, so DNS changes and redirects cannot forward prompts to a hosted service. Publishing a suite still risks contamination of future models, so prefer fresh seeds.

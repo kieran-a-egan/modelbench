@@ -106,7 +106,7 @@ public class EndToEndTests
     [Fact] public async Task ManualFlowThroughTheCli()
     {
         using var dir = new TempDir();
-        File.WriteAllText(dir.File("models.json"), TestKit.ModelsJson("http://unused"));
+        File.WriteAllText(dir.File("models.json"), TestKit.ModelsJson("http://127.0.0.1:9/v1"));
         string[] g = ["--db", dir.File("m.db"), "--models", dir.File("models.json")];
         var (_, output) = await Cli([.. g, "suite", "generate", "--name", "m", "--seed", "1", "--family", "mathematics:1:2"]);
         var suiteShort = output.Split(' ')[1][..8];

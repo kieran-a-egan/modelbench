@@ -12,7 +12,7 @@ public sealed class ScriptedProvider(IEnumerable<ChatMessage> turns) : IModelPro
     {
         if (!_turns.TryDequeue(out var turn)) throw new InvalidOperationException("ScriptedProvider has no more turns");
         var response = new ModelResponse(turn.Content, turn.ToolCalls ?? [], null, turn.ToolCalls is { Count: > 0 } ? "tool_calls" : "stop",
-            Usage.Unknown, new Timing(DateTimeOffset.UtcNow, null, TimeSpan.Zero), JsonUtil.Serialize(request), JsonUtil.Serialize(turn), turn.ProviderState);
+            Usage.Unknown, new Timing(DateTimeOffset.UtcNow, null, TimeSpan.Zero), JsonUtil.Serialize(request), JsonUtil.Serialize(turn));
         return Task.FromResult(response);
     }
 }

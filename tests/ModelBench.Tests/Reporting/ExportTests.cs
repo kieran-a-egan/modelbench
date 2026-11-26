@@ -32,7 +32,7 @@ public class ExportTests
     private static (Run, string) Seed(TempDir dir)
     {
         using var db = dir.OpenDb();
-        var model = TestKit.Model("http://unused", apiKey: "sk-test-SECRET");
+        var model = TestKit.Model("http://127.0.0.1:9/v1", apiKey: "sk-test-SECRET");
         var run = ReportSeed.AddRun(db, ReportSeed.AddSuite(db), model.Ref, ExecutionMode.SingleTurn, ReportSeed.T0,
             new A(0, 0, Passed, Cost: 1), new A(1, 0, Failed, FinalText: "=cmd|'/C calc'!A0"), new A(2, 0, Failed, FinalText: "has,comma \"and quote\""));
         run.ModelSnapshotJson = ModelCatalog.Snapshot(model);

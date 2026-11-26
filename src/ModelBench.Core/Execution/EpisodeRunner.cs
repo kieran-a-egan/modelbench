@@ -66,5 +66,5 @@ public static class EpisodeRunner
     }
 
     private static ChatMessage Assistant(ModelResponse r)
-        => new(Role.Assistant, r.Text, r.ToolCalls.Count > 0 ? r.ToolCalls : null, ProviderState: r.ProviderState);
+        => new(Role.Assistant, r.Text, r.ToolCalls.Count > 0 ? r.ToolCalls : null);
 }

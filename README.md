@@ -1,6 +1,6 @@
 # ModelBench
 
-ModelBench is a local, deterministic benchmarking app for language models, written in C# on .NET 10. It generates frozen, seeded benchmark suites, runs them against any model you configure (local or remote), grades every answer with plain code, and stores everything in SQLite so runs can be inspected, compared and re-graded. It has a CLI (`modelbench`) and a Blazor Server dashboard that share one database.
+ModelBench is a local, deterministic benchmarking app for language models, written in C# on .NET 10. It generates frozen, seeded benchmark suites, runs them against local models served by any OpenAI-compatible server (Strata, Ollama, LM Studio, llama.cpp, vLLM, ...), grades every answer with plain code, and stores everything in SQLite so runs can be inspected, compared and re-graded. It has a CLI (`modelbench`) and a Blazor Server dashboard that share one database.
 
 ## Non-negotiables
 
@@ -17,34 +17,44 @@ See `docs/architecture.md`, `docs/threat-model.md` and `docs/acceptance-criteria
 - .NET 10 SDK
 - Docker, for the code families (code-generation, debugging) and `selftest`. Everything else works without it.
 
+## Install
+
+```
+./install.ps1
+```
+
+This publishes the CLI and the dashboard into `~/.modelbench/bin` (with `benchmarks/` and `sandbox/`) and adds that folder to your user PATH. Open a new terminal afterwards. Re-run it after pulling to update. It works from Windows PowerShell or `pwsh` on macOS/Linux; on macOS/Linux it prints the `PATH` line to add to your shell profile.
+
 ## Quickstart
 
 ```
 # 1. Build the sandbox images (once)
-dotnet run --project src/ModelBench.Cli -- sandbox build
+modelbench sandbox build
 
-# 2. Describe your models: copy models.example.json to ./models.json and edit it,
-#    or point --models at a pi models file such as ~/.pi/agent/models.json
-cp models.example.json models.json
+# 2. Describe your models: copy models.example.json to ~/.modelbench/models.json and edit it,
+#    or point MODELBENCH_MODELS at a pi models file (set it once, e.g. setx MODELBENCH_MODELS %USERPROFILE%\.pi\agent\models.json)
+cp models.example.json ~/.modelbench/models.json
 
 # 3. Generate a suite: 3 tasks of every family at every complexity
-dotnet run --project src/ModelBench.Cli -- suite generate --name first --seed 1 --family mathematics:all:3 --family debugging:2:3
+modelbench suite generate --name first --seed 1 --family mathematics:all:3 --family debugging:2:3
 
 # 4. Run it
-dotnet run --project src/ModelBench.Cli -- run start --suite <suite-id> --model strata/inkling-2-mini-sq-15
+modelbench run start --suite <suite-id> --model strata/inkling-2-mini-sq-15
 
 # 5. Inspect scores and every failed assertion
-dotnet run --project src/ModelBench.Cli -- run show <run-id> --failures
+modelbench run show <run-id> --failures
 
 # 6. Compare models and runs
-dotnet run --project src/ModelBench.Cli -- leaderboard
-dotnet run --project src/ModelBench.Cli -- compare <run-a> <run-b>
+modelbench leaderboard
+modelbench compare <run-a> <run-b>
 
-# 7. Open the dashboard
-dotnet run --project src/ModelBench.Web
+# 7. Open the dashboard (same database and models file; Ctrl+C stops it)
+modelbench web
 ```
 
-Ids may be abbreviated to any unique prefix (the CLI prints 8 characters). The database defaults to `~/.modelbench/modelbench.db` (`--db` or `MODELBENCH_DB` override it). `models.json` is looked up as `--models`, then `./models.json`, then `~/.modelbench/models.json`; the dashboard takes `MODELBENCH_MODELS`.
+Ids may be abbreviated to any unique prefix (the CLI prints 8 characters). The database defaults to `~/.modelbench/modelbench.db` (`--db` or `MODELBENCH_DB` override it). `models.json` is looked up as `--models`, then `MODELBENCH_MODELS`, then `./models.json`, then `~/.modelbench/models.json`. `modelbench web` passes the same database and models file to the dashboard; `--port` changes the port (default 5180) and `--no-browser` skips opening a browser.
+
+From a checkout without installing, use `dotnet run --project src/ModelBench.Cli -- <args>` and `dotnet run --project src/ModelBench.Web`.
 
 Check the installation with `modelbench selftest`, which replays every family's reference and known-bad answers through the real grading pipeline.
 
