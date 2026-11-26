@@ -24,15 +24,17 @@ public sealed record RunSummary(
     IReadOnlyList<(AttemptOutcome Outcome, int Count)> Outcomes, int Attempts, int Graded, int Passed, int InfraErrors, int Timeouts, int Cancelled,
     double? PassRate, double? MeanScore, double? Consistency,
     IReadOnlyList<Slice> ByCategory, IReadOnlyList<Slice> ByComplexity, IReadOnlyList<Slice> ByFamily,
-    IReadOnlyDictionary<string, Agg> Metrics, double? CostPerSuccess, int GradingVersion)
+    IReadOnlyDictionary<string, Agg> Metrics, double? CostPerSuccess, int GradingVersion, int Planned)
 {
     public int Excluded => InfraErrors + Timeouts + Cancelled;
     /// <summary>Attempts the model is accountable for: graded ones plus timeouts (it ran out of its budget). Infra errors and cancellations are not.</summary>
     public int Accountable => Graded + Timeouts;
     /// <summary>Passed / (graded + timeouts): the ranking figure (MB-001). PassRate is graded accuracy only.</summary>
     public double? EndToEndRate => Accountable == 0 ? null : (double)Passed / Accountable;
-    /// <summary>Share of attempts that are accountable; below 1 means infra errors or cancellations hid part of the run.</summary>
-    public double? Completion => Attempts == 0 ? null : (double)Accountable / Attempts;
+    /// <summary>Share of PLANNED attempts (mode-matching tasks x repeats, not stored rows) that are accountable; below 1 means infra errors, cancellations or missing attempts hid part of the run.</summary>
+    public double? Completion => Planned == 0 ? null : (double)Accountable / Planned;
+    /// <summary>Only a fully covered run (Completion 1) is authoritative; incomplete runs are listed after the ranked ones and marked.</summary>
+    public bool Authoritative => Completion == 1;
     public Agg Metric(string name) => Metrics.TryGetValue(name, out var a) ? a : new Agg(0, Attempts, 0, null);
 }
 
@@ -104,7 +106,8 @@ public static class Reports
             graded.Count == 0 ? null : graded.Average(r => r.Score ?? 0),
             repeated.Count == 0 ? null : (double)repeated.Count(g => g.Select(r => r.Outcome).Distinct().Count() == 1) / repeated.Count,
             Slices(graded, r => r.Category), Slices(graded, r => r.Complexity.ToString()), Slices(graded, r => r.FamilyId),
-            agg, passed > 0 && cost.N == cost.M ? cost.Sum / passed : null, run.GradingVersion);
+            agg, passed > 0 && cost.N == cost.M ? cost.Sum / passed : null, run.GradingVersion,
+            db.Tasks.Count(t => t.SuiteId == run.SuiteId && t.Mode == (run.Mode == ExecutionMode.Manual ? ExecutionMode.SingleTurn : run.Mode)) * run.Repeats);
     }
 
     /// <summary>Completed runs of one mode, grouped by suite content hash (only comparable within a hash). Latest run per (model, hash) unless allRuns.</summary>
@@ -122,7 +125,7 @@ public static class Reports
         // Comparable only within one suite hash AND one grading methodology.
         return runs.GroupBy(r => (r.Suite!.ContentHash, r.GradingVersion))
             .Select(g => new LeaderboardGroup(g.First().Suite!.Name, g.Key.ContentHash, g.Select(r => Summarize(db, r.Id))
-                .OrderByDescending(s => s.Completion == 1).ThenByDescending(s => s.EndToEndRate ?? -1).ThenByDescending(s => s.PassRate ?? -1).ThenByDescending(s => s.MeanScore ?? -1)
+                .OrderByDescending(s => s.Authoritative).ThenByDescending(s => s.EndToEndRate ?? -1).ThenByDescending(s => s.PassRate ?? -1).ThenByDescending(s => s.MeanScore ?? -1)
                 .ThenBy(s => s.ModelRef, StringComparer.Ordinal).ThenByDescending(s => s.CreatedAt).ToList(), g.Key.GradingVersion))
             .OrderBy(g => g.SuiteName, StringComparer.Ordinal).ThenBy(g => g.SuiteHash, StringComparer.Ordinal).ThenByDescending(g => g.GradingVersion).ToList();
     }

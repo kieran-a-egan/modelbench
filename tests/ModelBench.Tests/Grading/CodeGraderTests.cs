@@ -219,6 +219,17 @@ public class CodeGraderTests
     [InlineData("100", "1e2", 0, true)]
     [InlineData("0.1", "0.10", 0, true)]
     [InlineData("[1,{\"k\":9007199254740993}]", "[1,{\"k\":9007199254740992}]", 0, false)] // nested
+    [InlineData("1e-29", "0", 0, false)] // decimal would round both to zero
+    [InlineData("1e400", "2e400", 0, false)] // double would make both infinity
+    [InlineData("1e2", "100", 0, true)]
+    [InlineData("100", "100.0", 0, true)]
+    [InlineData("1.00e2", "100", 0, true)]
+    [InlineData("-0", "0", 0, true)]
+    [InlineData("-0.0e5", "0", 0, true)]
+    [InlineData("1e400", "10e399", 0, true)] // huge exponents are compared, never expanded
+    [InlineData("1e999999999999", "1e999999999998", 0, false)]
+    [InlineData("1.000000000000000000000000000001", "1.000000000000000000000000000002", 0, false)] // last digit beyond decimal
+    [InlineData("-1", "1", 0, false)]
     [InlineData("1.0", "1.05", 0.1, true)]
     [InlineData("1.0", "1.5", 0.1, false)]
     public async Task ExactNumericGrading(string expected, string actual, double tolerance, bool equal)

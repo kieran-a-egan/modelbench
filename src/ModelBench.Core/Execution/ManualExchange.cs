@@ -47,6 +47,7 @@ public static class ManualExchange
     {
         var run = await db.Runs.SingleAsync(r => r.Id == runId, ct);
         if (run.Mode != ExecutionMode.Manual) throw new InvalidOperationException("run is not a Manual run");
+        RunService.RequireCurrentGradingVersion(run);
         var tasks = await db.Tasks.Where(t => t.SuiteId == run.SuiteId && t.Mode == ExecutionMode.SingleTurn).ToDictionaryAsync(t => t.Id, ct);
         var existing = (await db.Attempts.Where(a => a.RunId == runId).Select(a => new { a.TaskId, a.RepeatIndex }).ToListAsync(ct))
             .Select(a => (a.TaskId, a.RepeatIndex)).ToHashSet();

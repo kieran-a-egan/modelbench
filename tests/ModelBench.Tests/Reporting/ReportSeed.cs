@@ -29,7 +29,7 @@ public static class ReportSeed
         var run = new Run
         {
             SuiteId = suite.Id, ModelRef = model, ModelSnapshotJson = "{}", Mode = mode, RetryPolicyJson = "{}", EnvironmentJson = "{}",
-            Status = RunStatus.Completed, CreatedAt = created, CompletedAt = created.AddMinutes(1), Repeats = 1,
+            Status = RunStatus.Completed, CreatedAt = created, CompletedAt = created.AddMinutes(1), Repeats = Math.Max(1, (attempts.Length + 3) / 4), // by default the seeded attempts are the whole plan (4 tasks x repeats)
         };
         db.Runs.Add(run);
         foreach (var a in attempts)

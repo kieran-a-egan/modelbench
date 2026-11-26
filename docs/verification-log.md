@@ -25,6 +25,9 @@ Manual and live checks backing `docs/acceptance-criteria.md`. Automated evidence
 
 `selftest` consequence: the quadratic code-generation answer is no longer a known-bad case at complexity 3 and up, because it is correct and performance is no longer scored.
 
+### Owner review of PR #5 (second round)
+Manual import refuses a version mismatch; `GradingPipeline` forces performance outcomes unscored; grading runs outside the attempt deadline; attempt, redo-deletion and final-status writes are fenced by the lease owner token in the same transaction; `CodeSupport.NumberEqual` compares canonical (sign, coefficient, exponent); completion uses planned attempts and incomplete runs are marked unranked. Per-request telemetry persistence is deferred. Tests: `ConcurrencyAndResumeTests` (version refusal on resume and import, stale owner fenced), `UnscoredPerformanceTests`, `CodeGraderTests.ExactNumericGrading`, `ReportingTests`. After this round: `dotnet build -warnaserror` 0 warnings; `dotnet test` **510 passed, 0 failed** (baseline 492).
+
 ### Live model: Strata Desktop `inkling-2-mini-sq-15@low` (scratch database)
 - Suite `e2e` (code-generation c3 ×2 with performance graders, mathematics c2 ×2, tool-calling c3 ×2), hash `cb9fe6909cea`.
 - SingleTurn 4/4 and ToolAssisted 2/2 passed. Leaderboard and `run show` print end-to-end, graded pass rate, completion and `grading v2`.

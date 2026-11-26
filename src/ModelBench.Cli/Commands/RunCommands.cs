@@ -128,7 +128,7 @@ internal static class RunCommands
         w.WriteLine($"run {s.RunId}  model {S(s.ModelRef)}  mode {s.Mode}  status {s.Status}  suite {Short(s.SuiteId)}");
         w.WriteLine("attempts: " + string.Join("  ", s.Outcomes.Select(t => $"{t.Outcome} {t.Count}")));
         if (s.EndToEndRate is { } e2e)
-            w.WriteLine($"end-to-end {s.Passed}/{s.Accountable} = {F(e2e)}  (timeouts count as failures)   completion {s.Accountable}/{s.Attempts} = {F(s.Completion!.Value)}  (infra errors and cancellations excluded)");
+            w.WriteLine($"end-to-end {s.Passed}/{s.Accountable} = {F(e2e)}  (timeouts count as failures)   completion {s.Accountable}/{s.Planned} = {F(s.Completion!.Value)}  (infra errors, cancellations and missing attempts excluded)");
         if (s.PassRate is { } pr)
             w.WriteLine($"graded pass rate {s.Passed}/{s.Graded} = {F(pr)}   mean score {F(s.MeanScore!.Value)}  (graded attempts only)   grading v{s.GradingVersion}");
         if (s.Consistency is { } c) w.WriteLine($"consistency {F(c)}");

@@ -49,7 +49,7 @@
             @foreach (var r in g.Rows)
             {
                 <tr>
-                    <td><a href="/history?model=@Fmt.Q(r.ModelRef)&suite=@r.SuiteHash">@r.ModelRef</a></td><td><a href="/runs/@r.RunId">@Fmt.Short(r.RunId)</a></td><td>@Fmt.Date(r.CreatedAt)</td>
+                    <td><a href="/history?model=@Fmt.Q(r.ModelRef)&suite=@r.SuiteHash">@r.ModelRef</a>@if (!r.Authoritative) { <span class="muted"> incomplete, unranked</span> }</td><td><a href="/runs/@r.RunId">@Fmt.Short(r.RunId)</a></td><td>@Fmt.Date(r.CreatedAt)</td>
                     <td><PassBar Value="r.EndToEndRate" /></td><td><PassBar Value="r.PassRate" /></td><td class="num">@Fmt.Pct(r.Completion)</td><td class="num">@Fmt.Score(r.MeanScore)</td><td class="num">@r.Graded</td><td class="num">@r.InfraErrors / @r.Timeouts</td>
                     <td class="num">@Fmt.Pct(r.Consistency)</td><td class="num">@Fmt.Num(r.Metric(MetricNames.TimeToFirstTokenMs).Median)</td>
                     <td class="num">@Fmt.Num(r.Metric(MetricNames.ThroughputTps).Mean)</td>

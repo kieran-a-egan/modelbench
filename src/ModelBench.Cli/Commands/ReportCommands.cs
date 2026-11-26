@@ -31,7 +31,7 @@ internal static class ReportCommands
                 Table(w, ["MODEL", "RUN", "DATE", "E2E", "GRADED PASS", "COMPLETE", "SCORE", "N", "INFRA/TO", "CONSIST", "TTFT MS", "TPS", "COST", "COST/SUCCESS"],
                     g.Rows.Select(r => new[]
                     {
-                        S(r.ModelRef), Short(r.RunId), r.CreatedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), F(r.EndToEndRate), F(r.PassRate), F(r.Completion), F(r.MeanScore), r.Graded.ToString(),
+                        S(r.ModelRef) + (r.Authoritative ? "" : " [INCOMPLETE, unranked]"), Short(r.RunId), r.CreatedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), F(r.EndToEndRate), F(r.PassRate), F(r.Completion), F(r.MeanScore), r.Graded.ToString(),
                         $"{r.InfraErrors}/{r.Timeouts}", F(r.Consistency), N(r.Metric(MetricNames.TimeToFirstTokenMs).Median), N(r.Metric(MetricNames.ThroughputTps).Mean),
                         N(r.Metric(MetricNames.CostUsd).Total), N(r.CostPerSuccess),
                     }).ToList());

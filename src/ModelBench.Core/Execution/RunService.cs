@@ -46,8 +46,7 @@ public static class RunService
     {
         var run = db.Runs.SingleOrDefault(r => r.Id == runId) ?? throw new InvalidOperationException($"run {runId} not found");
         if (run.Mode == ExecutionMode.Manual) throw new InvalidOperationException("manual runs are completed with 'manual import'");
-        if (run.GradingVersion != GradingPipeline.Version)
-            throw new InvalidOperationException($"run {runId} was graded with methodology v{run.GradingVersion}; this build grades with v{GradingPipeline.Version}, so resuming would mix them. Start a new run.");
+        RequireCurrentGradingVersion(run);
         // Early, friendly refusal; RunExecutor's atomic lease acquisition is what actually prevents a double execution.
         if (run.LeaseOwner is not null && run.LeaseExpiresMs > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             throw new RunLeaseException($"run {runId} is being executed by another process; wait for it, or cancel it with 'run cancel'");
@@ -63,6 +62,13 @@ public static class RunService
             throw new InvalidOperationException($"model configuration for {run.ModelRef} changed since the run started:\n  " + string.Join("\n  ", diff)
                 + "\nrevert the configuration to resume, or start a new run with the new configuration");
         return model;
+    }
+
+    /// <summary>Resuming or importing into a run graded with another methodology would mix versions in one run.</summary>
+    public static void RequireCurrentGradingVersion(Run run)
+    {
+        if (run.GradingVersion != GradingPipeline.Version)
+            throw new InvalidOperationException($"run {run.Id} was graded with methodology v{run.GradingVersion}; this build grades with v{GradingPipeline.Version}, so resuming would mix them. Start a new run.");
     }
 
     private static List<string> SnapshotDiff(string stored, string fresh)

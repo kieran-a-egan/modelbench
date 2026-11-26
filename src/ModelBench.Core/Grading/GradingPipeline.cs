@@ -50,11 +50,14 @@ public static class GradingPipeline
             results.Add(new AssertionResult { Grader = "step-limit", Name = "step-limit", Required = false, Weight = 0, Passed = false, Score = 0, Diagnostic = "the model was still calling tools when the step limit was reached" });
         foreach (var spec in hidden.Graders)
         {
+            // v2 (ADR 0006): performance is empirical (host wall time), so whatever the stored spec says (frozen v1 suites, static definitions)
+            // it is reported but never moves Score or Passed.
+            var scored = spec.Type != "performance";
             foreach (var o in await GraderRegistry.Get(spec.Type).GradeAsync(spec, ctx))
                 results.Add(new AssertionResult
                 {
                     Grader = spec.Type, Name = o.Name, Expected = o.Expected, Actual = o.Actual, Score = o.Score,
-                    Weight = spec.Weight, Required = spec.Required, Passed = o.Passed, Diagnostic = o.Diagnostic,
+                    Weight = scored ? spec.Weight : 0, Required = scored && spec.Required, Passed = o.Passed, Diagnostic = o.Diagnostic,
                 });
         }
 

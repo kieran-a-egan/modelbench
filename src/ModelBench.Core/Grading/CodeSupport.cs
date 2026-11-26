@@ -22,16 +22,29 @@ internal static class CodeSupport
     };
 
     /// <summary>
-    /// The one JSON number equality used by every grader. Zero tolerance is exact: integers as BigInteger, then decimal
-    /// (so 1 == 1.0 == 1e0), and double only beyond decimal's range. A positive tolerance is an absolute difference in double.
+    /// The one JSON number equality used by every grader. Zero tolerance is exact: both numbers are reduced to a canonical
+    /// (sign, integer coefficient without trailing zeros, base-10 exponent) and compared, so 1 == 1.0 == 1e0 and 1e400 != 2e400
+    /// without ever materialising a power of ten. A positive tolerance is an absolute difference in double.
     /// </summary>
     public static bool NumberEqual(JsonElement a, JsonElement b, double tol = 0)
     {
         if (tol > 0) return Math.Abs(a.GetDouble() - b.GetDouble()) <= tol;
-        const NumberStyles integer = NumberStyles.AllowLeadingSign;
-        if (BigInteger.TryParse(a.GetRawText(), integer, CultureInfo.InvariantCulture, out var ia)
-            && BigInteger.TryParse(b.GetRawText(), integer, CultureInfo.InvariantCulture, out var ib)) return ia == ib;
-        return a.TryGetDecimal(out var da) && b.TryGetDecimal(out var db) ? da == db : a.GetDouble() == b.GetDouble();
+        return Canonical(a.GetRawText()) == Canonical(b.GetRawText());
+    }
+
+    /// <summary>Raw JSON number text (already validated by the parser) as (negative, coefficient, exponent); every zero is (false, 0, 0).</summary>
+    private static (bool Negative, BigInteger Coefficient, BigInteger Exponent) Canonical(string raw)
+    {
+        var negative = raw[0] == '-';
+        var e = raw.IndexOfAny(['e', 'E']);
+        var mantissa = raw[(negative ? 1 : 0)..(e < 0 ? raw.Length : e)];
+        var exponent = e < 0 ? BigInteger.Zero : BigInteger.Parse(raw[(e + 1)..], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
+        var dot = mantissa.IndexOf('.');
+        var digits = dot < 0 ? mantissa : mantissa.Remove(dot, 1);
+        if (dot >= 0) exponent -= mantissa.Length - dot - 1;
+        var trimmed = digits.TrimEnd('0');
+        if (trimmed.Length == 0) return (false, BigInteger.Zero, BigInteger.Zero);
+        return (negative, BigInteger.Parse(trimmed, CultureInfo.InvariantCulture), exponent + (digits.Length - trimmed.Length));
     }
 
     /// <summary>JSON structural equality; numbers compare with NumberEqual, recursively.</summary>

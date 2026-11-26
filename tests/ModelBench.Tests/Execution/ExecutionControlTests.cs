@@ -5,6 +5,8 @@ using ModelBench.Core.Config;
 using ModelBench.Core.Domain;
 using ModelBench.Core.Execution;
 using ModelBench.Core.Generation;
+using ModelBench.Core.Grading;
+using ModelBench.Core.Metrics;
 using ModelBench.Core.Persistence;
 using ModelBench.Core.Providers;
 using ModelBench.Core.Reporting;
@@ -257,6 +259,69 @@ public class ConcurrencyAndResumeTests
 
         var ex = Assert.Throws<InvalidOperationException>(() => RunService.PrepareResume(db, run.Id, ModelCatalog.Parse(TestKit.ModelsJson(server.BaseUrl))));
         Assert.Contains("would mix them", ex.Message);
+
+        // The executor itself refuses too (a caller that skips PrepareResume), before any inference or mutation.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Exec(TestKit.Model(server.BaseUrl)).ExecuteAsync(db, run.Id, default));
+        Assert.Equal(0, server.Calls);
+        var row = db.Runs.AsNoTracking().Single(r => r.Id == run.Id);
+        Assert.Equal((RunStatus.Pending, (Guid?)null), (row.Status, row.LeaseOwner));
+        Assert.Empty(db.Attempts.AsNoTracking().Where(a => a.RunId == run.Id));
+    }
+
+    [Fact] public async Task AStaleOwnerCannotCommitItsResultOrStatusAndTheNewOwnerFinishes()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        using var release = new ManualResetEventSlim();
+        using var inProvider = new ManualResetEventSlim();
+        await using var server = await FakeServer.StartAsync((_, _) => { inProvider.Set(); release.Wait(); return FakeReply.Text("<answer>1</answer>"); });
+        var suite = TestKit.MakeSuite(db, 1);
+        var model = TestKit.Model(server.BaseUrl);
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null);
+
+        // A heartbeats rarely, so it cannot notice the takeover itself: only the write fence can stop it.
+        var aRun = Exec(model, TimeSpan.FromHours(1)).ExecuteAsync(db, run.Id, default);
+        await Task.Run(() => inProvider.Wait());
+
+        var b = Guid.NewGuid();
+        using (var other = BenchDb.Open(db.DbPath)) // B took the expired lease and is now the owner
+            other.Runs.Where(r => r.Id == run.Id).ExecuteUpdate(s => s.SetProperty(r => r.LeaseOwner, b).SetProperty(r => r.LeaseExpiresMs, DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeMilliseconds()));
+        release.Set();
+
+        await Assert.ThrowsAsync<RunLeaseException>(() => aRun);
+        Assert.Empty(db.Attempts.AsNoTracking().Where(x => x.RunId == run.Id)); // A's stale result was not committed
+        var row = db.Runs.AsNoTracking().Single(r => r.Id == run.Id);
+        Assert.Equal((RunStatus.Running, (Guid?)b), (row.Status, row.LeaseOwner)); // nor its status, and A did not release B's lease
+
+        // B's lease runs out and a fresh executor finishes the run.
+        db.Runs.Where(r => r.Id == run.Id).ExecuteUpdate(s => s.SetProperty(r => r.LeaseExpiresMs, 1L));
+        await Exec(model).ExecuteAsync(db, run.Id, default);
+        AssertOneTerminalRowPerItem(db, run.Id, 1, 1);
+        Assert.Equal(RunStatus.Completed, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status);
+    }
+
+    private sealed class ToolThenFailProvider : IModelProvider
+    {
+        private int _n;
+        public Task<ModelResponse> CompleteAsync(ModelRequest request, CancellationToken ct)
+            => _n++ == 0 ? new ScriptedProvider([new ChatMessage(Role.Assistant, null, [new ToolCall("c1", "lookup", "{}")])]).CompleteAsync(request, ct)
+                : throw new InfraException("boom", retryable: false);
+    }
+
+    [Fact] public async Task MultiCallEpisodeThatFailsBeforeReturningReportsUsageUnavailableNotMeasuredZero()
+    {
+        // PR #5 review: the first request of a tool loop succeeded, the second failed (no retries): no episode, but a call was made.
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = SuiteGenerator.Generate(new SuiteSpec("tools", 5, [new FamilySpec("tool-calling", 2, 1)]));
+        SuiteGenerator.Persist(db, suite);
+        var model = TestKit.Model("http://127.0.0.1:9/v1");
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.ToolAssisted, 1, 30, new RetryPolicy(), null);
+        await new RunExecutor(new ToolThenFailProvider(), model, new UnavailableSandbox()).ExecuteAsync(db, run.Id, default);
+
+        var a = db.Attempts.AsNoTracking().Include(x => x.Metrics).Single(x => x.RunId == run.Id);
+        Assert.Equal((AttemptOutcome.InfraError, 0), (a.Outcome, a.Retries));
+        Assert.Equal(Provenance.Unavailable, a.Metrics.Single(m => m.Name == MetricNames.ModelCalls).Provenance);
     }
 
     [Fact] public async Task ModifiedSuiteIsRefused()

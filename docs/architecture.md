@@ -101,8 +101,8 @@ Episodes:
 
 `RunExecutor`:
 - Work items are (task x repeat) pairs, minus attempts already in a terminal outcome. They are queued in (task index, repeat) order; completion order is not deterministic when `Run.Concurrency` > 1. This is what makes resume work.
-- `Run.Concurrency` workers read from a `Channel`. Each worker has its own `BenchDb` context (DbContext is not thread-safe); each attempt is persisted as soon as it finishes, and the unique (RunId, TaskId, RepeatIndex) index guards against duplicates. `AttemptCompleted` is raised serially under a lock.
-- Each attempt has a timeout of `Run.TimeoutSeconds`, enforced with a linked `CancellationTokenSource`. Exceeding it records outcome `Timeout`. There is no overall run deadline.
+- `Run.Concurrency` workers read from a `Channel`. Each worker has its own `BenchDb` context (DbContext is not thread-safe); each attempt is persisted as soon as it finishes, in one transaction that first renews the run lease with a conditional UPDATE on the owner token (a stale owner whose lease expired or was taken over commits nothing; redo deletion and the final status write are fenced the same way, and a heartbeat fault stops the work), and the unique (RunId, TaskId, RepeatIndex) index guards against duplicates. `AttemptCompleted` is raised serially under a lock.
+- Each attempt has a timeout of `Run.TimeoutSeconds`, enforced with a linked `CancellationTokenSource`. Exceeding it records outcome `Timeout`. The deadline covers inference (including retries) only: grading runs outside it, bounded by the sandbox's own limits, so a slow optional performance run can never turn a correct answer into a `Timeout`. There is no overall run deadline.
 - Retry follows `RetryPolicy { MaxRetries, BaseDelayMs, MaxDelayMs }` (`run start --max-retries`) and applies **only** to `InfraException.Retryable`. The delay is `base * 2^n` with equal jitter (50-100%), derived from a hash of (run, task, repeat, retry) so it is deterministic. A `Retry-After` on 429/503 (carried by `RetryAfterException`, thrown by `ProviderHttp`) is honoured when longer than the backoff. Every delay is capped at `MaxDelayMs`. `Attempt.Retries` counts retries.
 - When retries are exhausted, or the exception is not retryable, the outcome is `InfraError`. Sandbox `InfraException`s during grading are `InfraError` too. An empty or wrong-format answer is `Failed` and is never retried. `InfraError`, `Timeout` and `Cancelled` are excluded from the graded pass rate and mean score; `Timeout` counts as a failure in the end-to-end rate (see Metrics).
 - Cancellation:
@@ -148,7 +148,7 @@ Grader type ids (`GraderSpec.Type`) and their `Config`:
 | `compile` | `{ language: "python"\|"csharp", entryPoint }` | `compiles` |
 | `unit-tests` | `{ language, entryPoint, cases: [{ args: [..], expected: json }], tolerance?: number }` | one per case, `case[i]` |
 | `differential` | same shape as unit-tests; cases are seeded random inputs whose expected values come from the host reference solver | one per case, `random[i]` |
-| `performance` | `{ language, entryPoint, args: [..], expected: json, budgetMs: number }`. Runs the case alone with the sandbox `TimeoutMs = budgetMs`. Within-budget means a **correct** output (MB-003), not killed, and **host** wall time within the budget; in-container timings are informational only, because candidate code can forge them. Host wall time depends on load, so the verdict is empirical: `code-generation` emits this grader with weight 0, not required (MB-002), and regrade skips unscored assertions | `correct`, `within-budget` |
+| `performance` (GradingPipeline forces Weight 0 / Required false for every performance spec, whatever the stored spec says) | `{ language, entryPoint, args: [..], expected: json, budgetMs: number }`. Runs the case alone with the sandbox `TimeoutMs = budgetMs`. Within-budget means a **correct** output (MB-003), not killed, and **host** wall time within the budget; in-container timings are informational only, because candidate code can forge them. Host wall time depends on load, so the verdict is empirical: `code-generation` emits this grader with weight 0, not required (MB-002), and regrade skips unscored assertions | `correct`, `within-budget` |
 | `ast` | `{ language, rules: [{ kind: "defines"\|"forbids-import"\|"forbids-call"\|"requires-loop"\|"forbids-recursion", name? }] }` | one per rule |
 | `tool-calls` | `{ required: [{ name, args?: json-subset }], ordered?: bool, forbidden?: [name], maxCalls?: int }`. `called[i]` and `order` credit only **executed** calls (not on the transcript's last message, which the step limit leaves unexecuted, and arguments within 64 KB; the same rule as regrade's replay). `forbidden` and `max-calls` count every **requested** call (MB-008) | `called[i]:name` per requirement, `order`, `forbidden:name`, `max-calls` |
 | `env-state` | `{ expected: json-subset }`, flattened to leaf paths (object keys joined by `.`, array items as `[i]`) and compared by deep equality with the final environment state; `{"path": null}` asserts absence; a null state fails every assertion | one per leaf path |
@@ -179,14 +179,15 @@ Per attempt, summed over the episode's model calls:
 - `duration_ms`: Measured, inference wall time of the whole attempt: from the first try to the end of the successful episode, including failed tries and back-off (MB-009).
 - `throughput_tps`: Calculated as output tokens / (total − ttft) for the first call, and only when both are measured.
 - `model_calls`: Measured.
+- `duration_ms` of an attempt that replaced a deleted one (resume) covers only the replacement, not the earlier attempt. Per-request telemetry persistence (keeping the usage of failed tries and replaced attempts) is deferred; until then incomplete usage is reported Unavailable.
 - When usage is incomplete (the attempt retried, or it replaced a deleted attempt via resume), the failed requests' usage was never reported, so tokens, `model_calls` and `cost_usd` are Unavailable rather than understated. Coverage (N/M) shows the gap, and cost per success is then not reported.
 - `cost_usd`: Calculated from tokens × `Pricing` (reasoning tokens billed at the `Reasoning` rate if set, else at the output rate). Unavailable when tokens or pricing are missing.
 - `energy_kwh` and `energy_cost_usd`: Estimated from duration × `Energy.Watts` and the price.
 
 Run level:
-- **end-to-end rate**: passes / (graded + timeouts). Timeouts are the model's own budget exhaustion, so they count as failures. This ranks the leaderboard, complete runs (no infra errors or cancellations) first (MB-001)
+- **end-to-end rate**: passes / (graded + timeouts). Timeouts are the model's own budget exhaustion, so they count as failures. This ranks the leaderboard, complete runs (no infra errors or cancellations) first (MB-001); runs with completion below 1 are listed after, marked, and never outrank a complete run
 - **graded pass rate** and mean score, over graded attempts only
-- **completion**: (graded + timeouts) / attempts. Below 1 means infra errors or cancellations hid part of the run
+- **completion**: (graded + timeouts) / planned attempts, where planned = mode-matching tasks x repeats (not stored rows). Below 1 means infra errors, cancellations or missing attempts hid part of the run; such a run is not authoritative: it is listed after the ranked runs and marked incomplete
 - **consistency**: the fraction of tasks with the same pass/fail outcome on every repeat
 - cost per successful task: Σcost / passes
 
