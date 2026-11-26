@@ -18,21 +18,47 @@ public class CodeFamilyTests
 
     private static GeneratedTask Gen(string family, int c, long seed) => FamilyRegistry.Get(family).Generate(new Rng(seed), c);
 
-    [Fact] public void SuitesUpToCapacityHaveDistinctReproduciblePromptsAndBeyondItFailWithTheCapacity()
+    [Fact] public void CapacityIsExplicitAndExactlyThatManyDistinctPromptsGenerateReproducibly()
     {
-        // MB-006: the visible prompt pool is finite (one per coding spec at a complexity); exceeding it is a clear error, never a silent repeat.
+        // #4 / MB-006: one visible prompt per task variant at a complexity; beyond the capacity is a clear error, never a silent repeat.
+        var fam = FamilyRegistry.Get("code-generation");
+        Assert.Equal([12, 22, 10, 10, 10], Enumerable.Range(1, 5).Select(c => fam.Capacity(c)!.Value));
         for (var c = 1; c <= 5; c++)
         {
-            var ex = Assert.Throws<InvalidOperationException>(() => SuiteGenerator.Generate(new SuiteSpec("big", 3, [new FamilySpec("code-generation", c, 200)])));
-            var capacity = int.Parse(System.Text.RegularExpressions.Regex.Match(ex.Message, @"ran out after (\d+)").Groups[1].Value);
-            Assert.InRange(capacity, 1, 199);
-            Assert.Contains("capacity", ex.Message);
-
+            var capacity = fam.Capacity(c)!.Value;
             var a = SuiteGenerator.Generate(new SuiteSpec("full", 3, [new FamilySpec("code-generation", c, capacity)]));
             var b = SuiteGenerator.Generate(new SuiteSpec("full", 3, [new FamilySpec("code-generation", c, capacity)]));
             Assert.Equal(capacity, a.Tasks.Select(t => t.PromptJson).Distinct().Count());
             Assert.Equal(a.ContentHash, b.ContentHash);
+            var ex = Assert.Throws<InvalidOperationException>(() => SuiteGenerator.Generate(new SuiteSpec("big", 3, [new FamilySpec("code-generation", c, capacity + 1)])));
+            Assert.Contains($"has {capacity} distinct prompts (its capacity)", ex.Message);
         }
+    }
+
+    [Fact] public void EveryTaskVariantIsReachedAndValidAtEveryComplexityItServes()
+    {
+        Assert.Equal(CodeTasks.All.Count, CodeTasks.All.Select(t => t.Id).Distinct().Count());
+        var fam = FamilyRegistry.Get("code-generation");
+        for (var c = 1; c <= 5; c++)
+        {
+            var want = CodeGenerationFamily.Pool(c).Select(t => t.Id).ToHashSet();
+            var seen = new HashSet<string>();
+            for (long seed = 0; seen.Count < want.Count && seed < 2000; seed++)
+            {
+                var t = Gen("code-generation", c, seed);
+                var v = fam.Validate(t);
+                Assert.True(v.Ok, $"c{c} seed {seed}: {string.Join("; ", v.Problems)}");
+                seen.Add(t.Hidden.Reference!.Value.GetProperty("task").GetString()!);
+            }
+            Assert.Equal(want.Order(), seen.Order());
+        }
+        Assert.Equal(["csharp", "python"], CodeGenerationFamily.Pool(2).Select(t => t.Lang).Distinct().Order());
+    }
+
+    [Fact] public void GoldenSuiteHashPinsTheGenerator()
+    {
+        var hash = SuiteGenerator.Generate(new SuiteSpec("golden", 7, Enumerable.Range(1, 5).Select(c => new FamilySpec("code-generation", c, 2)).ToList())).ContentHash;
+        Assert.True(hash == "5b34d4a29c62d633e17002d02e46cb89f1067f2c8ade6b04423cf69cee3cfa69", $"golden hash is now {hash}");
     }
 
     [Theory, MemberData(nameof(Families))]
@@ -78,14 +104,6 @@ public class CodeFamilyTests
                 Assert.Equal(c >= 4, types.Contains("ast"));
             }
         }
-    }
-
-    [Fact] public void CodeGenerationCatalogueHasEightTasksAndBothLanguages()
-    {
-        var ids = Enumerable.Range(0, 400).Select(s => Gen("code-generation", s % 2 + 1, s).Hidden.Reference!.Value.GetProperty("task").GetString()).Distinct().ToList();
-        Assert.True(ids.Count >= 8, string.Join(",", ids));
-        var langs = Enumerable.Range(0, 100).Select(s => Gen("code-generation", 2, s).Hidden.Graders[0].Config.GetProperty("language").GetString()).Distinct();
-        Assert.Equal(2, langs.Count());
     }
 
     [Fact] public void ValidateCatchesATamperedExpectedValue()
@@ -179,6 +197,25 @@ public class PerformanceBudgetCalibrationTests
             Assert.True(fast.All(o => o.Passed), $"{t.Id} reference: {fast[1].Diagnostic}");
             var slow = await Grade(t.Perf.Quadratic); // usually killed at the budget, so its correctness is not observable here
             Assert.False(slow[1].Passed, $"{t.Id} quadratic should be reported over budget: {slow[1].Diagnostic}");
+        }
+    }
+}
+
+public class CodeTaskVariantSandboxTests
+{
+    [Fact] public async Task EveryReferencePassesAndEveryWrongAnswerFailsItsOwnExamplesAndEdgeCases()
+    {
+        // Seeded sampling (selftest) may skip a variant; this covers each one's hand-written answers in the real sandbox.
+        var sb = await SandboxEnv.Require();
+        foreach (var t in CodeTasks.All)
+        {
+            var cases = t.Examples.Concat(t.Edge).Select(a => new { args = a, expected = t.Solve(CodeKit.Elems(a)) });
+            var cfg = JsonUtil.Element(new { language = t.Lang, entryPoint = t.Entry, cases });
+            async Task<IReadOnlyList<AssertionOutcome>> Grade(string code) => await GraderRegistry.Get("unit-tests").GradeAsync(new GraderSpec("unit-tests", "u", cfg),
+                new GradingContext(TaskPrompt.Simple("q", AnswerFormat.CodeBlock), new TaskHidden([]), code, code, [], null, sb, default));
+            var good = await Grade(t.Ref);
+            Assert.True(good.All(o => o.Passed), $"{t.Id} reference: {good.FirstOrDefault(o => !o.Passed)?.Diagnostic}");
+            Assert.Contains(await Grade(t.Wrong), o => !o.Passed);
         }
     }
 }

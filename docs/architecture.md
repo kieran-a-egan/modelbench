@@ -77,7 +77,14 @@ Rules:
 - `SuiteSpec { Name, MasterSeed, Families: [{ Family, Complexity, Count }] }`. Generator versions are recorded per entry at generation time.
 - Each task's seed is `Rng.DeriveSeed(masterSeed, familyId, familyVersion, index)`. The family gets `new Rng(seed)`.
 - Procedural prompts are distinct within a suite. If a prompt repeats, the seed is re-derived with familyId `"<id>#<attempt>"` (attempt 1..49), so the result is still deterministic and `verify` reproduces it. File-defined families repeat tasks by design.
-- Each procedural family has a finite visible-prompt capacity per complexity. `code-generation` has one visible prompt per coding spec in its pool (hidden inputs are random, the visible specification is not), so its capacity is the pool size at that complexity. Asking for more fails with `ran out after N (the family's capacity at this complexity)`; it never repeats a prompt silently (MB-006). More diverse specifications (seeded templates with independent solvers) are a known gap.
+- Each procedural family has a finite visible-prompt capacity per complexity, and a suite never repeats a prompt silently (MB-006). A family whose capacity is a small fixed number declares it (`IBenchmarkFamily.Capacity`), and `SuiteGenerator` refuses a larger count up front with that number. For other families, prompt collisions are retried with up to 1000 deterministic seed salts before failing with `ran out after N (the family's capacity at this complexity)`.
+- `code-generation` (v4, #4) draws from 22 task variants. Each variant is its own visible specification (for example kth smallest, kth largest or kth smallest distinct; intervals that touch merged or kept apart), with its own reference solver, an algorithmically different checker for `Validate`, and a reference answer, a wrong answer and, for the performance tasks, a quadratic answer. Examples are fixed per variant and only the hidden inputs are random, so each variant gives one prompt per complexity:
+
+  | Complexity | Pool | Capacity |
+  |---|---|---|
+  | 1 | tasks without a performance case (10 C#, 2 Python) | 12 |
+  | 2 | every variant | 22 |
+  | 3–5 | Python tasks with a performance case | 10 |
 - `TaskInstance.ContentHash` is `SHA256(PromptJson + "\n" + HiddenJson)` as lowercase hex. `Suite.ContentHash` is `SHA256` of the task hashes joined by `\n`, in index order.
 - `Validate` runs on every generated task. Generation fails loudly if validation fails, so it never retries silently with another seed. A family that needs rejection sampling does it *inside* `Generate`, using the same `Rng`.
 - `suite verify <id>` regenerates the suite from `SpecJson` and compares every hash.

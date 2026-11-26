@@ -58,6 +58,9 @@ public interface IBenchmarkFamily
 
     /// <summary>Simulated environment for ToolAssisted/Agentic tasks; null for single-turn families.</summary>
     ISimulatedEnvironment? CreateEnvironment(TaskHidden hidden) => null;
+
+    /// <summary>How many distinct visible prompts the family can produce at this complexity, when that is a small fixed number; null when unbounded for practical purposes.</summary>
+    int? Capacity(int complexity) => null;
 }
 
 /// <summary>

@@ -15,7 +15,7 @@ namespace ModelBench.Core.Families;
 public sealed class CodeGenerationFamily : IBenchmarkFamily
 {
     public string Id => "code-generation";
-    public int Version => 3; // v2: platform-independent LF line endings; v3: performance reported, not scored (MB-002)
+    public int Version => 4; // v2: platform-independent LF line endings; v3: performance reported, not scored (MB-002); v4: spec variants (#4)
     public string Category => "code-generation";
     public string Description => "Write a Python or C# function from a specification; graded by compiling, hidden unit tests, seeded differential tests, a performance budget and AST rules.";
     public ExecutionMode Mode => ExecutionMode.SingleTurn;
@@ -24,12 +24,16 @@ public sealed class CodeGenerationFamily : IBenchmarkFamily
 
     private static object Case(CodeTask t, object[] args) => new { args, expected = t.Solve(Elems(args)) };
 
+    /// <summary>Easy tasks only at c1; every task at c2; c >= 3 uses only tasks that have a performance case.</summary>
+    internal static List<CodeTask> Pool(int c) => CodeTasks.All.Where(t => c == 2 || (c == 1) == (t.Perf is null)).ToList();
+
+    /// <summary>Each task variant has one visible prompt per complexity (examples are fixed; only hidden inputs are random).</summary>
+    public int? Capacity(int complexity) => Pool(complexity).Count;
+
     public GeneratedTask Generate(Rng rng, int c)
     {
         if (c is < Complexity.Min or > Complexity.Max) throw new ArgumentOutOfRangeException(nameof(c));
-        // Easy tasks only at c1; every task at c2; c >= 3 uses only tasks that have a performance case.
-        var pool = CodeTasks.All.Where(t => c == 2 || (c == 1) == (t.Perf is null)).ToList();
-        var task = rng.Pick(pool);
+        var task = rng.Pick(Pool(c));
 
         var used = task.Examples.Concat(task.Edge).Select(J).ToList();
         var random = new List<object[]>();
