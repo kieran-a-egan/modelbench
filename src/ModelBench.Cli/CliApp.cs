@@ -18,6 +18,7 @@ public static class CliApp
         root.Subcommands.Add(ManualCommands.Build(cli));
         root.Subcommands.Add(SelfTestCommand.Build(cli));
         root.Subcommands.Add(SandboxCommands.Build());
+        root.Subcommands.Add(WebCommand.Build(cli));
         var config = new InvocationConfiguration { Output = output, Error = error };
         return await root.Parse(args).InvokeAsync(config, ct);
     }

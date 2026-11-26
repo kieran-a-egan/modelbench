@@ -24,6 +24,10 @@ app.UseAntiforgery();
 
 app.MapStaticAssets();
 
+// `modelbench web` passes a per-launch nonce and polls for it, so it can tell this process from anything else on the port.
+if (builder.Configuration["MODELBENCH_LAUNCH_NONCE"] is { Length: > 0 } launchNonce)
+    app.MapGet("/_modelbench/launch", () => launchNonce);
+
 app.MapGet("/export/runs/{id:guid}.json", (Guid id, Func<BenchDb> open) =>
 {
     using var db = open();

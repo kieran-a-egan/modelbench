@@ -47,8 +47,49 @@ Checks performed:
 - These all returned 200 with real data: `/`, `/models`, `/suites`, `/runs`, `/runs/{id}`, `/attempts/{id}`, `/leaderboard` (SingleTurn and Agentic), `/compare?a=&b=` (shows FailToPass/PassToFail rows), `/export/runs/{id}.json` and `/export/runs/{id}/assertions.csv`.
 - On the attempt page, failed assertions render with HTML-encoded expected and actual values.
 - The Models page contains no API key values.
-- **Not verified in a browser:** no browser automation was available in this session, so the interactive Blazor actions were not exercised by clicking. Those actions are model save, suite generate/verify, run start/cancel/resume and progress polling. Their underlying services are covered by tests, and the pages' server-rendered output is covered by `WebSmokeTests`.
+- The interactive actions are covered by the browser check below.
+
+### Dashboard (browser check, Playwright + Chromium)
+The setup:
+- Playwright 1.x drove headless Chromium against `dotnet run --project src/ModelBench.Web`.
+- The app used a fresh scratch DB and a **copy** of the pi models file.
+- The live Strata model served the runs.
+- Every step asserted on what the page rendered. One clean pass, all checks green, 0 browser console errors.
+
+Models:
+- The table lists the Strata model.
+- Saving invalid JSON shows the parser error and leaves the file byte-identical.
+- A valid save, which added an `energy` profile, re-renders the table ("350 W") and writes the file; `apiKey` is unchanged.
+- The pi file has no literal keys (env/none only), so masking of literal keys rests on `SecretHandlingTests`.
+
+Suites:
+- Generate creates `ui-small` (4 tasks) and `ui-cancel` (10 tasks).
+- Verify reports "verified, every task and suite hash regenerates identically".
+- Submitting with no family selected shows "select at least one family".
+
+Runs:
+- Start run (model, variant `low` from the pi `thinkingLevelMap`, concurrency, label) navigates to the run page.
+- The progress line updates live without a reload (done counts 0→1→2→3→4), and on completion the page reloads into the summary, attempts and failures.
+- **Cancel:** the run stopped at 2/10, showing "Passed 1, Cancelled 1", and the Resume panel appeared.
+- **Resume:** the run completed 10/10.
+
+Run and attempt pages:
+- The run page's JSON and the three CSV export links download with 200.
+- The attempt page shows the prompt, assertions, metrics, transcript and raw request/response.
+
+Reports:
+- The leaderboard ranking and breakdown views work: per-category and per-complexity percentages, grouped by suite hash.
+- The model link opens History.
+- The Compare form (A = `@low`, B = no variant, same suite) shows the summary deltas and the per-task table.
+
+Found and fixed by this check (not visible to HTTP-only checks):
+- Every page's `<h1>` showed a heavy focus outline after Blazor's FocusOnNavigate. Fixed with `h1:focus { outline: none; }`; the heading is only programmatically focusable.
+- Web metric tables printed raw doubles (`323.5002`). `Fmt.Num` now uses the CLI's magnitude rule.
 
 ### Not verified live
 - The OpenAI Responses, Anthropic Messages and Google adapters were tested only against fixture SSE payloads; no API keys were available.
   - To check them for real, set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` and run `tests/ModelBench.Tests/bin/Debug/net10.0/ModelBench.Tests.exe -class "*LiveSmokeTests"`.
+
+## 2026-11-25: scope change, local models only
+
+The hosted-API adapters (OpenAI Responses, Anthropic Messages, Google Generative AI), their fixture tests and the opt-in `LiveSmokeTests` were removed: ModelBench benchmarks local models only. The two AC-13 entries above ("◐ remote APIs: fixtures only", "3 skips are LiveSmokeTests") describe the code before this change. AC-13 now covers `openai-completions` and manual, verified by the tests and the live Strata runs recorded above.

@@ -2,8 +2,8 @@ using System.Text.Json.Nodes;
 
 namespace ModelBench.Core.Config;
 
-/// <summary>pi-compatible api ids: "openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai", "manual".</summary>
-public enum ApiKind { OpenAiCompletions, OpenAiResponses, AnthropicMessages, GoogleGenerativeAi, Manual }
+/// <summary>pi-compatible api ids ModelBench runs: "openai-completions" (local OpenAI-compatible servers) and "manual".</summary>
+public enum ApiKind { OpenAiCompletions, Manual }
 
 /// <summary>USD per 1M tokens. Reasoning null = billed as output.</summary>
 public sealed record Pricing(decimal Input, decimal Output, decimal? Reasoning = null);
@@ -34,7 +34,7 @@ public sealed record ResolvedModel(
     string? Variant,
     /// <summary>samplingParams (temperature, top_p, seed, ...).</summary>
     JsonObject Sampling,
-    /// <summary>Variant settings, e.g. {"reasoningEffort":"low"} or {"thinkingBudget":8192}.</summary>
+    /// <summary>Variant settings, e.g. {"reasoningEffort":"low"}.</summary>
     JsonObject VariantSettings,
     /// <summary>Wire-compat flags, e.g. maxTokensField, supportsReasoningEffort.</summary>
     JsonObject Compat,

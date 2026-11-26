@@ -203,7 +203,7 @@ public class ConcurrencyAndResumeTests
     {
         using var dir = new TempDir();
         using var db = dir.OpenDb();
-        var run = RunService.CreateRun(db, TestKit.MakeSuite(db, 1).Id, TestKit.Model("http://x"), ExecutionMode.SingleTurn, 1, 5, new RetryPolicy(), null);
+        var run = RunService.CreateRun(db, TestKit.MakeSuite(db, 1).Id, TestKit.Model("http://127.0.0.1:9/v1"), ExecutionMode.SingleTurn, 1, 5, new RetryPolicy(), null);
         run.Status = RunStatus.Completed;
         db.SaveChanges();
         Assert.Throws<InvalidOperationException>(() => RunService.RequestCancel(db, run.Id));

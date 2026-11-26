@@ -34,6 +34,10 @@ else
         }
     </table>
     </div>
+    @if (skipped.Count > 0)
+    {
+        <p class="muted">Skipped, not local (ModelBench runs <code>openai-completions</code> on a loopback or private-network address, and <code>manual</code>): @string.Join(", ", skipped)</p>
+    }
 }
 
 <h2>models.json</h2>
@@ -51,6 +55,7 @@ else
     private sealed record Row(CatalogEntry Entry, ResolvedModel? Model, string? Problem);
 
     private List<Row> rows = [];
+    private IReadOnlyList<string> skipped = [];
     private string? loadError, message;
     private bool saved;
     private string text = "";
@@ -66,6 +71,7 @@ else
             text = File.MaskedText();
             if (!File.Exists) return;
             var catalog = File.Catalog();
+            skipped = catalog.Skipped();
             foreach (var e in catalog.List())
             {
                 try { rows.Add(new Row(e, catalog.Resolve(e.Ref), null)); }

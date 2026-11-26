@@ -8,6 +8,7 @@ Read `docs/architecture.md` (contracts, grader configs, invariants) and `docs/ac
 - CLI: `dotnet run --project src/ModelBench.Cli -- <args>`
 - Web: `dotnet run --project src/ModelBench.Web`
 - Sandbox images: `dotnet run --project src/ModelBench.Cli -- sandbox build`
+- Install (publish CLI + dashboard to `~/.modelbench/bin`, on PATH): `./install.ps1`; then `modelbench web` serves the dashboard.
 
 ## Rules
 - Never use an LLM for grading. Graders are pure functions of `GradingContext`, plus the sandbox.

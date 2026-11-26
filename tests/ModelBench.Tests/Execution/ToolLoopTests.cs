@@ -27,8 +27,8 @@ public class ToolLoopTests
         public Task<ModelResponse> CompleteAsync(ModelRequest request, CancellationToken ct) { Requests.Add(request); return _inner.CompleteAsync(request, ct); }
     }
 
-    private static ChatMessage Call(string name, string args = "{}", string id = "c", string? state = null)
-        => new(Role.Assistant, null, [new ToolCall(id, name, args)], ProviderState: state);
+    private static ChatMessage Call(string name, string args = "{}", string id = "c")
+        => new(Role.Assistant, null, [new ToolCall(id, name, args)]);
 
     private static readonly TaskPrompt Prompt = new("sys", "question", AnswerFormat.Tagged,
         [new ToolDefinition("t", "d", JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone())]);
@@ -36,14 +36,13 @@ public class ToolLoopTests
     [Fact] public async Task LoopsUntilTheModelAnswersWithoutToolCalls()
     {
         var env = new FakeEnv();
-        var provider = new Recording([Call("a", id: "c1", state: "[{\"state\":1}]"), Call("b", id: "c2"), new ChatMessage(Role.Assistant, "<answer>1</answer>")]);
+        var provider = new Recording([Call("a", id: "c1"), Call("b", id: "c2"), new ChatMessage(Role.Assistant, "<answer>1</answer>")]);
         var ep = await EpisodeRunner.RunToolLoopAsync(Prompt, env, provider, 8, default);
 
         Assert.Equal(["a", "b"], env.Calls.Select(c => c.Name));
         Assert.Equal(3, ep.Responses.Count);
         Assert.Equal([Role.System, Role.User, Role.Assistant, Role.Tool, Role.Assistant, Role.Tool, Role.Assistant], ep.Transcript.Select(m => m.Role));
         Assert.Equal(("c1", "a", "ok:a"), (ep.Transcript[3].ToolCallId, ep.Transcript[3].ToolName, ep.Transcript[3].Content));
-        Assert.Equal("[{\"state\":1}]", ep.Transcript[2].ProviderState); // provider state rides on the assistant message
         // The model sees prompt-only messages plus the growing conversation, and the tools every time.
         Assert.Equal([2, 4, 6], provider.Requests.Select(r => r.Messages.Count));
         Assert.All(provider.Requests, r => Assert.Equal(["t"], r.Tools.Select(t => t.Name)));

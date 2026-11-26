@@ -45,7 +45,7 @@ public class RegradeDeterminismTests
             scripts[gen.Prompt.User] = new ScriptedProvider(t.Index % 2 == 0 || gen.KnownBadTurns.Count == 0 ? gen.ReferenceTurns : gen.KnownBadTurns[0]);
         }
 
-        var model = TestKit.Model("http://unused");
+        var model = TestKit.Model("http://127.0.0.1:9/v1");
         var executor = new RunExecutor(new PerTaskProvider(scripts), model, sandbox);
         foreach (var mode in suite.Tasks.Select(t => t.Mode).Distinct())
             await executor.ExecuteAsync(db, RunService.CreateRun(db, suite.Id, model, mode, 1, 120, new RetryPolicy(), mode.ToString()).Id, CancellationToken.None);

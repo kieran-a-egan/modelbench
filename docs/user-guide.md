@@ -3,13 +3,13 @@
 Commands are shown as `modelbench ...`. From the repository use `dotnet run --project src/ModelBench.Cli -- ...`. Two options apply to every command:
 
 - `--db <path>`: the SQLite database. Default: the `MODELBENCH_DB` environment variable, then `~/.modelbench/modelbench.db`.
-- `--models <path>`: the models file. Default: `./models.json`, then `~/.modelbench/models.json`.
+- `--models <path>`: the models file. Default: the `MODELBENCH_MODELS` environment variable, then `./models.json`, then `~/.modelbench/models.json`.
 
 Run, suite and attempt ids can be abbreviated to any unique prefix. Errors print `error: ...` and exit with code 1.
 
 ## models.json reference
 
-The file is a superset of pi's `~/.pi/agent/models.json`: a pi file loads unchanged (point `--models` at it) and unknown fields are ignored. Comments and trailing commas are allowed. `models.example.json` at the repository root is a working template.
+ModelBench benchmarks **local models only**: anything served by an OpenAI-compatible server on your machine or network (Strata, Ollama, LM Studio, llama.cpp, vLLM, ...), plus the manual workflow. The file is a superset of pi's `~/.pi/agent/models.json`: a pi file loads unchanged (point `--models` or `MODELBENCH_MODELS` at it) and unknown fields are ignored. Providers on other apis in that file, such as pi's `anthropic-messages` or `google-generative-ai` entries, are skipped by `models list` and refused by `run start`. So is any `openai-completions` model whose effective `baseUrl` (a model-level `baseUrl` overrides the provider's) is not loopback or a private network (10/8, 172.16/12, 192.168/16, 169.254/16, IPv6 ULA and link-local); a hostname must resolve only to such addresses. The HTTP client enforces the same rule on every connection, uses no proxy and does not follow redirects, so prompts cannot be sent off the local network. Comments and trailing commas are allowed. `models.example.json` at the repository root is a working template.
 
 ```json
 { "providers": { "<providerId>": { ...provider..., "models": [ { ...model... } ] } } }
@@ -21,9 +21,9 @@ A model is addressed as `providerId/modelId` or `providerId/modelId@variant`. Th
 
 | Field | Meaning |
 |---|---|
-| `api` | Required unless every model sets its own. One of `openai-completions`, `openai-responses`, `anthropic-messages`, `google-generative-ai`, `manual`. |
-| `baseUrl` | API root, for example `http://127.0.0.1:47831/v1` or `https://api.anthropic.com`. |
-| `apiKey` | A literal key, `"none"` (send no auth header), or `{env:NAME}`. |
+| `api` | Required unless every model sets its own. `openai-completions` or `manual`. |
+| `baseUrl` | API root, for example `http://127.0.0.1:47831/v1` (Strata) or `http://127.0.0.1:11434/v1` (Ollama). |
+| `apiKey` | A literal key, `"none"` (send no auth header), or `{env:NAME}`. Only needed if your local server requires one. |
 | `headers` | Extra request headers. Values may use `{env:NAME}`. |
 | `energy` | `{ "watts": 350, "pricePerKwh": 0.30 }`. Used for the energy estimate of local models. |
 | `name` | Ignored by ModelBench. |
@@ -47,7 +47,7 @@ A model is addressed as `providerId/modelId` or `providerId/modelId@variant`. Th
 | `variants` | Named setting sets, selected with `@name` (below). |
 | `thinkingLevelMap` | pi's map, such as `{ "low": "low", "high": "high" }`. Each entry becomes a variant `{ "reasoningEffort": value }`. Explicit `variants` win on a name clash. |
 
-Settings are merged into the request body as: `samplingParams`, then `extra` (for Anthropic and Google the variant's thinking settings are applied before them).
+Settings are merged into the request body as: `samplingParams`, then `extra`.
 
 ### Variants and thinking settings
 
@@ -55,10 +55,7 @@ A variant is a set of settings chosen at run time, so the same model can be benc
 
 | Setting | Used by | Effect |
 |---|---|---|
-| `reasoningEffort` | openai-responses (always), openai-completions (only when `compat.supportsReasoningEffort` is true), google (as `thinkingLevel` if no `thinkingLevel`) | Sets the reasoning effort. |
-| `thinking: "adaptive"` | anthropic-messages | Adaptive thinking with summarised display. |
-| `thinkingBudget` | anthropic-messages, google-generative-ai | Token budget for thinking. |
-| `thinkingLevel` | google-generative-ai | Thinking level. |
+| `reasoningEffort` | openai-completions, when `compat.supportsReasoningEffort` is true | Sent as `reasoning_effort`. |
 
 ### Compat flags
 
@@ -66,10 +63,6 @@ A variant is a set of settings chosen at run time, so the same model can be benc
 |---|---|---|
 | `maxTokensField` | openai-completions | Name of the output limit field. Default `max_completion_tokens`; local servers often need `max_tokens`. |
 | `supportsReasoningEffort` | openai-completions | Send `reasoning_effort` from the variant. |
-| `anthropicVersion` | anthropic-messages | The `anthropic-version` header. Default `2026-10-21`. |
-| `anthropicBeta` | anthropic-messages | The `anthropic-beta` header. |
-
-**Anthropic sampling note.** With `anthropic-version` 2026-10-21 or later (the default) the API rejects `temperature`, `top_p` and `top_k` with HTTP 400. ModelBench therefore refuses to start with a clear message if those appear in `samplingParams`; remove them, or pin an older `anthropicVersion` if you need them.
 
 ### Secrets
 
@@ -85,12 +78,9 @@ A variant is a set of settings chosen at run time, so the same model can be benc
 | `api` | Notes |
 |---|---|
 | `openai-completions` | `/chat/completions`, streaming. Works with most local servers. Bearer auth unless the key is `none`. |
-| `openai-responses` | OpenAI Responses API. |
-| `anthropic-messages` | Messages API, `x-api-key` auth. Thinking blocks are replayed in tool loops. |
-| `google-generative-ai` | Gemini `generateContent`. |
 | `manual` | No network. Used for the manual workflow. |
 
-`modelbench models list` prints every model, its api, reasoning flag, context window and variants.
+`modelbench models list` prints every runnable model, its api, reasoning flag, context window and variants.
 
 ## CLI commands
 
@@ -278,15 +268,17 @@ Because graders never call a model, a differing regrade always means a grader, f
 
 ## Dashboard
 
-`dotnet run --project src/ModelBench.Web` serves the dashboard (the URL is printed; set `MODELBENCH_DB` and `MODELBENCH_MODELS` to choose files). It has Models (with a masked editor for `models.json`), Suites, Runs (start, progress, cancel), per-mode leaderboards, breakdowns, history, compare, task and attempt detail with raw prompts and responses, and CSV/JSON exports. On a run's page, **Resume** appears for Cancelled, Failed and Running runs, with a checkbox to retry infrastructure errors; if the suite or model configuration changed, the refusal is shown on the page (use the CLI's `--allow-config-change` to override). The dashboard executes runs one at a time in the background of the web process.
+`modelbench web` serves the dashboard on `http://127.0.0.1:5180` and opens a browser (`--port`, `--no-browser`; Ctrl+C stops it). It waits for its own dashboard process to answer with a per-launch token, so another service on the same port is never mistaken for it; if the dashboard exits or does not answer within 30 seconds, the command fails. It uses the same `--db`/`--models` resolution as every other command. It needs the dashboard installed next to the CLI by `install.ps1`; from a checkout, `dotnet run --project src/ModelBench.Web` does the same (set `MODELBENCH_DB` and `MODELBENCH_MODELS` to choose files). It has Models (with a masked editor for `models.json`), Suites, Runs (start, progress, cancel), per-mode leaderboards, breakdowns, history, compare, task and attempt detail with raw prompts and responses, and CSV/JSON exports. On a run's page, **Resume** appears for Cancelled, Failed and Running runs, with a checkbox to retry infrastructure errors; if the suite or model configuration changed, the refusal is shown on the page (use the CLI's `--allow-config-change` to override). The dashboard executes runs one at a time in the background of the web process.
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
-| `no models.json found` | Pass `--models`, or create `./models.json` or `~/.modelbench/models.json`. |
+| `no models.json found` | Pass `--models`, set `MODELBENCH_MODELS`, or create `./models.json` or `~/.modelbench/models.json`. |
 | `environment variable X is not set` | A `{env:X}` reference in `apiKey` or `headers`. Set it in the shell that runs ModelBench. |
-| `anthropic-version ... rejects 'temperature'` | Remove `temperature`, `top_p`, `top_k` from `samplingParams` of an Anthropic model, or set `compat.anthropicVersion` older. |
+| `api '...' is not supported` | ModelBench runs local models only (`openai-completions`, `manual`). Hosted APIs and subscriptions are out of scope. |
+| `baseUrl host '...' is not a loopback or private-network address` | The model's endpoint is not local. Hosted OpenAI-compatible services are out of scope; point `baseUrl` at a server on your machine or LAN. |
+| `the dashboard exited during startup ... already in use?` | Another process holds the port; pass `--port`. |
 | Many `InfraError` attempts | The endpoint is down, rate-limited (HTTP 429/5xx) or timed out. Retries use backoff and `Retry-After`. Fix the cause and `run resume <run> --retry-infra`. |
 | Code attempts are `InfraError` | Docker is not running or images are missing. Start Docker and `modelbench sandbox build`. |
 | `suite has no ToolAssisted tasks` | The run `--mode` does not match the suite's task modes. Generate a suite with families of that mode. |

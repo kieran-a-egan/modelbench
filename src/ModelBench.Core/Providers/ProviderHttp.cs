@@ -11,7 +11,9 @@ namespace ModelBench.Core.Providers;
 /// <summary>Shared HTTP/SSE plumbing for the adapters: one error mapping (ADR 0007) and small JSON helpers.</summary>
 internal static class ProviderHttp
 {
-    public static HttpClient NewClient() => new() { Timeout = Timeout.InfiniteTimeSpan };
+    /// <summary>Local endpoints only: every connection goes through the locality check, with no proxy and no redirects (either could forward prompts off the network).</summary>
+    public static HttpClient NewClient() => new(new SocketsHttpHandler { ConnectCallback = LocalEndpoint.ConnectAsync, UseProxy = false, AllowAutoRedirect = false })
+        { Timeout = Timeout.InfiniteTimeSpan };
 
     public static string BaseUrl(ResolvedModel model) => (model.BaseUrl ?? throw new InvalidOperationException($"{model.Ref} has no baseUrl")).TrimEnd('/');
 
