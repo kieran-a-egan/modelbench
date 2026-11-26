@@ -300,6 +300,55 @@ public class ConcurrencyAndResumeTests
         Assert.Equal(RunStatus.Completed, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status);
     }
 
+    [Fact] public async Task AnExpiredLeaseWithNoOtherOwnerStillFencesTheWrite()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        using var release = new ManualResetEventSlim();
+        using var inProvider = new ManualResetEventSlim();
+        await using var server = await FakeServer.StartAsync((_, _) => { inProvider.Set(); release.Wait(); return FakeReply.Text("<answer>1</answer>"); });
+        var suite = TestKit.MakeSuite(db, 1);
+        var model = TestKit.Model(server.BaseUrl);
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null);
+
+        var aRun = Exec(model, TimeSpan.FromHours(1)).ExecuteAsync(db, run.Id, default);
+        await Task.Run(() => inProvider.Wait());
+        using (var other = BenchDb.Open(db.DbPath)) // A is still the owner, but its lease ran out
+            other.Runs.Where(r => r.Id == run.Id).ExecuteUpdate(s => s.SetProperty(r => r.LeaseExpiresMs, DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeMilliseconds()));
+        release.Set();
+
+        await Assert.ThrowsAsync<RunLeaseException>(() => aRun);
+        Assert.Empty(db.Attempts.AsNoTracking().Where(x => x.RunId == run.Id));
+        Assert.Equal(RunStatus.Running, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status); // A's Completed was not committed
+    }
+
+    [Fact] public async Task ATransientHeartbeatFaultDoesNotLoseTheLeaseOrCancelTheRun()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        using var release = new ManualResetEventSlim();
+        using var inProvider = new ManualResetEventSlim();
+        await using var server = await FakeServer.StartAsync((_, _) => { inProvider.Set(); release.Wait(); return FakeReply.Text("<answer>1</answer>"); });
+        var suite = TestKit.MakeSuite(db, 1);
+        var model = TestKit.Model(server.BaseUrl);
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null);
+
+        var aRun = Exec(model, TimeSpan.FromMilliseconds(50)).ExecuteAsync(db, run.Id, default);
+        await Task.Run(() => inProvider.Wait());
+        // Every heartbeat now fails (as a BUSY/IO error would) for several ticks; no fenced write is in flight while the provider blocks.
+        using (var other = BenchDb.Open(db.DbPath))
+        {
+            other.Database.ExecuteSqlRaw("CREATE TRIGGER fault BEFORE UPDATE OF LeaseExpiresMs ON Runs BEGIN SELECT RAISE(ABORT, 'simulated fault'); END");
+            await Task.Delay(400);
+            other.Database.ExecuteSqlRaw("DROP TRIGGER fault");
+        }
+        release.Set();
+
+        await aRun;
+        AssertOneTerminalRowPerItem(db, run.Id, 1, 1);
+        Assert.Equal(RunStatus.Completed, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status);
+    }
+
     private sealed class ToolThenFailProvider : IModelProvider
     {
         private int _n;

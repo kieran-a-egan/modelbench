@@ -35,6 +35,8 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
     private TimeSpan LeaseTtl => TimeSpan.FromTicks(Math.Max(TimeSpan.FromSeconds(30).Ticks, CancelPollInterval.Ticks * 3));
 
     private volatile bool _leaseLost;
+    private volatile string? _renewError; // set when renewal kept failing for a whole LeaseTtl
+    private long _lastRenewMs; // last successful renewal (heartbeat or fenced write); read/written atomically on 64-bit
 
     /// <summary>
     /// Runs every missing, Pending or Cancelled attempt (so it is also the resume path). With <paramref name="retryInfra"/>,
@@ -56,6 +58,8 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
                 .ExecuteUpdateAsync(s => s.SetProperty(r => r.LeaseOwner, owner).SetProperty(r => r.LeaseExpiresMs, expires), CancellationToken.None) == 0)
             throw new RunLeaseException($"run {runId} is being executed by another process; wait for it, or cancel it with 'run cancel'");
         _leaseLost = false;
+        _renewError = null;
+        _lastRenewMs = now;
         try
         {
             await ExecuteLeasedAsync(db, run, owner, ct, retryInfra);
@@ -149,6 +153,7 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
             await WriteFencedAsync(db, runId, owner, () => db.SaveChangesAsync(CancellationToken.None));
         }
         if (_leaseLost) throw new RunLeaseException($"run {runId}: lease lost to another executor; stopped");
+        if (_renewError is { } err) throw new RunLeaseException($"run {runId}: could not renew the run lease: {err}; stopped");
     }
 
     /// <summary>
@@ -166,6 +171,7 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
             _leaseLost = true;
             return false;
         }
+        _lastRenewMs = now;
         await write();
         await tx.CommitAsync(CancellationToken.None);
         return true;
@@ -179,27 +185,34 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         {
             while (await timer.WaitForNextTickAsync(stop))
             {
-                var expires = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + (long)LeaseTtl.TotalMilliseconds;
-                if (await db.Runs.Where(r => r.Id == runId && r.LeaseOwner == owner)
-                        .ExecuteUpdateAsync(s => s.SetProperty(r => r.LeaseExpiresMs, expires), CancellationToken.None) == 0)
+                try
                 {
-                    _leaseLost = true;
-                    await work.CancelAsync();
-                    return;
+                    var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    if (await db.Runs.Where(r => r.Id == runId && r.LeaseOwner == owner)
+                            .ExecuteUpdateAsync(s => s.SetProperty(r => r.LeaseExpiresMs, now + (long)LeaseTtl.TotalMilliseconds), CancellationToken.None) == 0)
+                    {
+                        _leaseLost = true;
+                        await work.CancelAsync();
+                        return;
+                    }
+                    _lastRenewMs = now;
+                    if (await db.Runs.AsNoTracking().Where(r => r.Id == runId).Select(r => r.CancelRequested).SingleAsync(CancellationToken.None))
+                    {
+                        await work.CancelAsync();
+                        return;
+                    }
                 }
-                if (await db.Runs.AsNoTracking().Where(r => r.Id == runId).Select(r => r.CancelRequested).SingleAsync(CancellationToken.None))
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    // A transient fault (BUSY/IO) is not a lost lease, and every write is fenced anyway: keep polling until the lease may have expired.
+                    if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - _lastRenewMs < (long)LeaseTtl.TotalMilliseconds) continue;
+                    _renewError = ex.Message;
                     await work.CancelAsync();
                     return;
                 }
             }
         }
         catch (OperationCanceledException) { }
-        catch
-        {
-            _leaseLost = true; // a heartbeat that cannot renew means the lease cannot be trusted: stop working
-            await work.CancelAsync();
-        }
     }
 
     private async Task<Attempt> RunAttemptAsync(Run run, TaskInstance task, int repeat, RetryPolicy policy, bool replacesPrior, CancellationToken ct)
