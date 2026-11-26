@@ -20,7 +20,10 @@ public static class Regrader
 {
     public static async Task<RegradeReport> RunAsync(BenchDb db, Guid runId, ISandbox sandbox, CancellationToken ct)
     {
-        if (!await db.Runs.AnyAsync(r => r.Id == runId, ct)) throw new InvalidOperationException($"run {runId} not found");
+        var version = await db.Runs.Where(r => r.Id == runId).Select(r => (int?)r.GradingVersion).SingleOrDefaultAsync(ct)
+            ?? throw new InvalidOperationException($"run {runId} not found");
+        if (version != GradingPipeline.Version)
+            throw new InvalidOperationException($"run was graded with methodology v{version}; this build grades with v{GradingPipeline.Version}, so a regrade would report every methodology change as a difference");
         var attempts = await db.Attempts.AsNoTracking().Include(a => a.Task).Include(a => a.Assertions)
             .Where(a => a.RunId == runId && (a.Outcome == AttemptOutcome.Passed || a.Outcome == AttemptOutcome.Failed) && a.TranscriptJson != null)
             .ToListAsync(ct);
@@ -42,6 +45,8 @@ public static class Regrader
             for (var i = 0; i < Math.Min(stored.Count, graded.Assertions.Count); i++)
             {
                 var (s, n) = (stored[i], graded.Assertions[i]);
+                // ponytail: within-budget is host wall time, empirical by design (MB-002) and unscored, so it is not compared.
+                if (s.Grader == "performance" && s.Name == "within-budget" && s.Weight == 0 && n.Name == s.Name) continue;
                 if (s.Grader != n.Grader || s.Name != n.Name || s.Expected != n.Expected || s.Actual != n.Actual || s.Score != n.Score || s.Passed != n.Passed)
                     problems.Add($"assertion {i} '{s.Name}': stored (expected [{s.Expected}] actual [{s.Actual}] score {s.Score} passed {s.Passed}) vs regraded (expected [{n.Expected}] actual [{n.Actual}] score {n.Score} passed {n.Passed})");
             }

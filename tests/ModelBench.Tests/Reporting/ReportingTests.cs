@@ -23,6 +23,44 @@ public class ReportingTests
         Assert.Equal(["math"], s.ByCategory.Select(c => c.Key).ToArray());
     }
 
+    private static A[] Seq(params AttemptOutcome[] outcomes) => [.. outcomes.Select((o, i) => new A(i % 4, i / 4, o))];
+
+    [Fact] public void TimeoutsCountAgainstEndToEndRankingAndInfraErrorsShowAsIncompletion()
+    {
+        // MB-001: 1 pass + 9 timeouts used to rank at 100% (graded only), above 9 passes + 1 fail at 90%.
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = ReportSeed.AddSuite(db);
+        var timeouts = ReportSeed.AddRun(db, suite, "m/times-out", ST, ReportSeed.T0, Seq([Passed, .. Enumerable.Repeat(AttemptOutcome.Timeout, 9)]));
+        var solid = ReportSeed.AddRun(db, suite, "m/solid", ST, ReportSeed.T0, Seq([.. Enumerable.Repeat(Passed, 9), Failed]));
+        var flaky = ReportSeed.AddRun(db, suite, "m/infra", ST, ReportSeed.T0, Seq(Passed, Passed, InfraError, Cancelled));
+
+        var t = Reports.Summarize(db, timeouts.Id);
+        Assert.Equal((1.0, 0.1, 1.0), (t.PassRate, t.EndToEndRate, t.Completion));
+        var s = Reports.Summarize(db, solid.Id);
+        Assert.Equal((0.9, 0.9, 1.0), (s.PassRate, s.EndToEndRate, s.Completion));
+        var f = Reports.Summarize(db, flaky.Id);
+        Assert.Equal((1.0, 1.0, 0.5), (f.PassRate, f.EndToEndRate, f.Completion)); // infra/cancel are not the model's fault, but are disclosed
+
+        Assert.Equal(["m/infra", "m/solid", "m/times-out"], Reports.Leaderboard(db, ST).Single().Rows.Select(r => r.ModelRef).ToArray());
+    }
+
+    [Fact] public void RunsGradedWithDifferentMethodologiesAreNeverRankedOrComparedTogether()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = ReportSeed.AddSuite(db);
+        var oldRun = ReportSeed.AddRun(db, suite, "m/a", ST, ReportSeed.T0, new A(0, 0, Passed));
+        var newRun = ReportSeed.AddRun(db, suite, "m/a", ST, ReportSeed.T0.AddDays(1), new A(0, 0, Failed));
+        oldRun.GradingVersion = 1;
+        db.SaveChanges();
+
+        var board = Reports.Leaderboard(db, ST);
+        Assert.Equal([Core.Grading.GradingPipeline.Version, 1], board.Select(g => g.GradingVersion).ToArray());
+        Assert.All(board, g => Assert.Single(g.Rows));
+        Assert.Contains("different methodologies", Assert.Throws<InvalidOperationException>(() => Reports.Compare(db, oldRun.Id, newRun.Id)).Message);
+    }
+
     [Fact] public void NoGradedAttemptsMeansNoPassRate()
     {
         using var dir = new TempDir();

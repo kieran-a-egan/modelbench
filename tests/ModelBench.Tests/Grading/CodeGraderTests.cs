@@ -181,16 +181,53 @@ public class CodeGraderTests
         Assert.Contains("informational", r[1].Diagnostic);
     }
 
-    [Fact] public async Task PerformanceTimeoutFailsBothAssertionsAndWrongOutputFailsOnlyCorrect()
+    [Fact] public async Task PerformanceTimeoutFailsBothAssertionsAndWrongOutputEarnsNoPerformanceCredit()
     {
         var killed = await Grade("performance", Perf(1000), Double, new FakeSandbox(_ => Task.FromResult(FakeSandbox.TimedOut)));
         Assert.All(killed, o => Assert.False(o.Passed));
         Assert.Equal("timed out", killed[0].Diagnostic);
+        // MB-003: fast but wrong, or a fast compile failure, gets no performance credit; only fast AND correct does.
         var wrong = await Grade("performance", Perf(2000), Double, new FakeSandbox(_ => Slow(1, 7)));
-        Assert.False(wrong[0].Passed);
-        Assert.True(wrong[1].Passed);
+        Assert.Equal((false, false, 0.0), (wrong[0].Passed, wrong[1].Passed, wrong[1].Score));
+        Assert.Equal("incorrect", wrong[1].Actual);
+        var noCompile = await Grade("performance", Perf(2000), Double, new FakeSandbox(_ => Task.FromResult(new SandboxResult(false, "line 1: invalid syntax", [], null, false, 0, ""))));
+        Assert.Equal((false, false), (noCompile[0].Passed, noCompile[1].Passed));
+        var right = await Grade("performance", Perf(2000), Double, new FakeSandbox(_ => Slow(1)));
+        Assert.Equal((true, true, 1.0), (right[0].Passed, right[1].Passed, right[1].Score));
         var none = await Grade("performance", Perf(2000), null, new FakeSandbox(_ => throw new InvalidOperationException()));
         Assert.All(none, o => Assert.Equal("no answer", o.Diagnostic));
+    }
+
+    [Fact] public async Task MalformedCaseIndicesAreUnusableNeverAPass()
+    {
+        // MB-004: the host validates the result protocol instead of trusting the frame's shape.
+        static SandboxResult Indices(params int[] idx) => new(true, null, [.. idx.Select(i => new CaseResult(i, JsonDocument.Parse("2").RootElement, null, 0))], null, false, 0, "");
+        var cfg = new { language = "python", entryPoint = "f", cases = Cases(([1], 2), ([1], 2)) };
+        foreach (var bad in new[] { Indices(1, 0), Indices(0, 0), Indices(0, 5) })
+        {
+            var r = await Grade("unit-tests", cfg, Double, new FakeSandbox(_ => Task.FromResult(bad)));
+            Assert.All(r, o => Assert.False(o.Passed));
+            Assert.Contains("malformed result", r[0].Diagnostic);
+        }
+        Assert.All(await Grade("unit-tests", cfg, Double, new FakeSandbox(_ => Task.FromResult(Indices(0, 1)))), o => Assert.True(o.Passed));
+    }
+
+    [Theory]
+    [InlineData("9007199254740993", "9007199254740992", 0, false)] // adjacent integers above 2^53: equal as doubles
+    [InlineData("123456789012345678901234567890", "123456789012345678901234567891", 0, false)] // beyond decimal: BigInteger
+    [InlineData("1", "1.0", 0, true)]
+    [InlineData("100", "1e2", 0, true)]
+    [InlineData("0.1", "0.10", 0, true)]
+    [InlineData("[1,{\"k\":9007199254740993}]", "[1,{\"k\":9007199254740992}]", 0, false)] // nested
+    [InlineData("1.0", "1.05", 0.1, true)]
+    [InlineData("1.0", "1.5", 0.1, false)]
+    public async Task ExactNumericGrading(string expected, string actual, double tolerance, bool equal)
+    {
+        // MB-007: zero tolerance is exact, never via double.
+        var cfg = new { language = "python", entryPoint = "f", cases = new[] { new { args = new[] { 1 }, expected = JsonDocument.Parse(expected).RootElement } }, tolerance };
+        var r = await Grade("unit-tests", cfg, Double, new FakeSandbox(_ => Task.FromResult(
+            new SandboxResult(true, null, [new CaseResult(0, JsonDocument.Parse(actual).RootElement, null, 0)], null, false, 0, ""))));
+        Assert.Equal(equal, r.Single().Passed);
     }
 
     [Fact] public async Task RealContainerPerformance()

@@ -7,12 +7,15 @@ namespace ModelBench.Core.Metrics;
 /// <summary>Per-attempt metrics with provenance (ADR 0008). Nothing is estimated from text; missing telemetry is Unavailable.</summary>
 public static class MetricCalculator
 {
-    public static List<Metric> Compute(IReadOnlyList<ModelResponse> responses, TimeSpan wallTime, Pricing? pricing, EnergyProfile? energy)
+    /// <param name="wallTime">Inference time for the whole attempt, including failed tries and back-off.</param>
+    /// <param name="usageComplete">False when requests outside <paramref name="responses"/> were made (a retried try, a replaced attempt):
+    /// tokens, model calls and cost are then Unavailable rather than understated (MB-009).</param>
+    public static List<Metric> Compute(IReadOnlyList<ModelResponse> responses, TimeSpan wallTime, Pricing? pricing, EnergyProfile? energy, bool usageComplete = true)
     {
         var m = new List<Metric>();
-        var input = Sum(responses, u => u.InputTokens);
-        var output = Sum(responses, u => u.OutputTokens);
-        var reasoning = Sum(responses, u => u.ReasoningTokens);
+        var input = usageComplete ? Sum(responses, u => u.InputTokens) : null;
+        var output = usageComplete ? Sum(responses, u => u.OutputTokens) : null;
+        var reasoning = usageComplete ? Sum(responses, u => u.ReasoningTokens) : null;
         m.Add(Count(MetricNames.InputTokens, input));
         m.Add(Count(MetricNames.OutputTokens, output));
         m.Add(Count(MetricNames.ReasoningTokens, reasoning));
@@ -20,7 +23,7 @@ public static class MetricCalculator
         var ttft = responses.Count > 0 ? responses[0].Timing.TimeToFirstToken : null;
         m.Add(ttft is { } t ? Make(MetricNames.TimeToFirstTokenMs, t.TotalMilliseconds, "ms", Provenance.Measured) : Unavailable(MetricNames.TimeToFirstTokenMs, "ms"));
         m.Add(Make(MetricNames.DurationMs, wallTime.TotalMilliseconds, "ms", Provenance.Measured));
-        m.Add(Make(MetricNames.ModelCalls, responses.Count, "calls", Provenance.Measured));
+        m.Add(usageComplete ? Make(MetricNames.ModelCalls, responses.Count, "calls", Provenance.Measured) : Unavailable(MetricNames.ModelCalls, "calls"));
 
         var firstOut = responses.Count > 0 ? responses[0].Usage.OutputTokens : null;
         var genTime = ttft is { } tt ? responses[0].Timing.Total - tt : (TimeSpan?)null;

@@ -40,13 +40,12 @@ internal static class RunCommands
 
         var resumeId = new Argument<string>("id") { Description = "Run id or unique prefix" };
         var retryInfra = new Option<bool>("--retry-infra") { Description = "Also redo InfraError and Timeout attempts (their retry counts are added to the new attempt)" };
-        var allowChange = new Option<bool>("--allow-config-change") { Description = "Resume even if the model configuration differs from the one the run started with" };
-        var resume = new Command("resume", "Run the missing, pending and cancelled attempts of a run") { resumeId, retryInfra, allowChange };
+        var resume = new Command("resume", "Run the missing, pending and cancelled attempts of a run") { resumeId, retryInfra };
         resume.SetAction((pr, ct) => Guard(pr, async w =>
         {
             using var db = cli.OpenDb(pr);
             var id = ResolveId(pr.GetRequiredValue(resumeId), db.Runs.Select(r => r.Id).ToList(), "run");
-            var model = RunService.PrepareResume(db, id, cli.Catalog(pr), pr.GetValue(allowChange));
+            var model = RunService.PrepareResume(db, id, cli.Catalog(pr));
             w.WriteLine($"resuming run {id} on {S(model.Ref)}");
             return await Execute(db, id, model, pr.GetValue(retryInfra), w, ct);
         }));
@@ -128,8 +127,10 @@ internal static class RunCommands
         var s = Reports.Summarize(db, runId);
         w.WriteLine($"run {s.RunId}  model {S(s.ModelRef)}  mode {s.Mode}  status {s.Status}  suite {Short(s.SuiteId)}");
         w.WriteLine("attempts: " + string.Join("  ", s.Outcomes.Select(t => $"{t.Outcome} {t.Count}")));
+        if (s.EndToEndRate is { } e2e)
+            w.WriteLine($"end-to-end {s.Passed}/{s.Accountable} = {F(e2e)}  (timeouts count as failures)   completion {s.Accountable}/{s.Attempts} = {F(s.Completion!.Value)}  (infra errors and cancellations excluded)");
         if (s.PassRate is { } pr)
-            w.WriteLine($"pass rate {s.Passed}/{s.Graded} = {F(pr)}   mean score {F(s.MeanScore!.Value)}  (infra errors, timeouts and cancellations excluded)");
+            w.WriteLine($"graded pass rate {s.Passed}/{s.Graded} = {F(pr)}   mean score {F(s.MeanScore!.Value)}  (graded attempts only)   grading v{s.GradingVersion}");
         if (s.Consistency is { } c) w.WriteLine($"consistency {F(c)}");
         if (s.Excluded > 0) w.WriteLine($"excluded from scores: {s.Excluded}");
 

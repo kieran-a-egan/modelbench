@@ -40,12 +40,15 @@ public static class RunService
 
     /// <summary>
     /// Validates that a run can be resumed and returns the model re-resolved from the catalog. Refuses when the suite is missing or
-    /// changed, or the model snapshot differs from the stored one (unless allowConfigChange, which is noted in Run.Label).
+    /// changed, or the model snapshot differs from the stored one: every attempt of a run must share one configuration (MB-005).
     /// </summary>
-    public static ResolvedModel PrepareResume(BenchDb db, Guid runId, ModelCatalog catalog, bool allowConfigChange)
+    public static ResolvedModel PrepareResume(BenchDb db, Guid runId, ModelCatalog catalog)
     {
         var run = db.Runs.SingleOrDefault(r => r.Id == runId) ?? throw new InvalidOperationException($"run {runId} not found");
         if (run.Mode == ExecutionMode.Manual) throw new InvalidOperationException("manual runs are completed with 'manual import'");
+        // Early, friendly refusal; RunExecutor's atomic lease acquisition is what actually prevents a double execution.
+        if (run.LeaseOwner is not null && run.LeaseExpiresMs > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            throw new RunLeaseException($"run {runId} is being executed by another process; wait for it, or cancel it with 'run cancel'");
         var suite = db.Suites.SingleOrDefault(s => s.Id == run.SuiteId) ?? throw new InvalidOperationException($"suite {run.SuiteId} no longer exists");
         var tasks = db.Tasks.Where(t => t.SuiteId == suite.Id).OrderBy(t => t.Index).ToList();
         if (tasks.Any(t => SuiteGenerator.TaskHash(t.PromptJson, t.HiddenJson) != t.ContentHash)
@@ -55,16 +58,8 @@ public static class RunService
         var model = catalog.Resolve(run.ModelRef);
         var diff = SnapshotDiff(run.ModelSnapshotJson, ModelCatalog.Snapshot(model));
         if (diff.Count > 0)
-        {
-            if (!allowConfigChange)
-                throw new InvalidOperationException($"model configuration for {run.ModelRef} changed since the run started:\n  " + string.Join("\n  ", diff) + "\nuse --allow-config-change to resume anyway");
-            const string note = "[config changed on resume]";
-            if (run.Label?.Contains(note) != true)
-            {
-                run.Label = string.IsNullOrEmpty(run.Label) ? note : $"{run.Label} {note}";
-                db.SaveChanges();
-            }
-        }
+            throw new InvalidOperationException($"model configuration for {run.ModelRef} changed since the run started:\n  " + string.Join("\n  ", diff)
+                + "\nrevert the configuration to resume, or start a new run with the new configuration");
         return model;
     }
 

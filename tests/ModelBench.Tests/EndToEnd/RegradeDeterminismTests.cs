@@ -5,6 +5,7 @@ using ModelBench.Core.Execution;
 using ModelBench.Core.Families;
 using ModelBench.Core.Generation;
 using ModelBench.Core.Providers;
+using ModelBench.Core.Sandbox;
 using ModelBench.Tests.Sandbox;
 using ModelBench.Tests.Support;
 
@@ -17,8 +18,49 @@ internal sealed class PerTaskProvider(Dictionary<string, ScriptedProvider> byPro
         => byPrompt[request.Messages.First(m => m.Role == Role.User).Content!].CompleteAsync(request, ct);
 }
 
+/// <summary>The real sandbox, but single-input runs (the performance case) take an extra delay on the host clock.</summary>
+internal sealed class SlowHost(ISandbox inner, int delayMs) : ISandbox
+{
+    public async Task<SandboxResult> ExecuteAsync(SandboxRequest r, CancellationToken ct)
+    {
+        var result = await inner.ExecuteAsync(r, ct);
+        if (r.Action == SandboxAction.Run && r.Inputs.Count == 1) await Task.Delay(delayMs, ct);
+        return result;
+    }
+}
+
 public class RegradeDeterminismTests
 {
+    [Fact] public async Task HostTimingChangesNeitherTheScoreNorTheRegradeVerdict()
+    {
+        // MB-002: within-budget is empirical; the same answer graded on a slow host must score and pass identically.
+        var sandbox = await SandboxEnv.Require();
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = SuiteGenerator.Generate(new SuiteSpec("perf", 11, [new FamilySpec("code-generation", 3, 1)]));
+        SuiteGenerator.Persist(db, suite);
+        var task = suite.Tasks.Single();
+        var gen = FamilyRegistry.Get(task.FamilyId).Generate(new Rng(task.Seed), 3, 0);
+        var perf = gen.Hidden.Graders.Single(g => g.Type == "performance");
+        Assert.Equal((0.0, false), (perf.Weight, perf.Required));
+
+        var model = TestKit.Model("http://127.0.0.1:9/v1");
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 120, new RetryPolicy(), null);
+        await new RunExecutor(new ScriptedProvider(gen.ReferenceTurns), model, sandbox).ExecuteAsync(db, run.Id, CancellationToken.None);
+        var stored = db.Attempts.AsNoTracking().Include(a => a.Assertions).Single();
+        Assert.Equal((AttemptOutcome.Passed, 1.0), (stored.Outcome, stored.Score));
+        Assert.True(stored.Assertions.Single(a => a.Name == "within-budget").Passed);
+
+        var slow = new SlowHost(sandbox, perf.Config.GetProperty("budgetMs").GetInt32() + 200);
+        var report = await Regrader.RunAsync(db, run.Id, slow, CancellationToken.None);
+        Assert.Empty(report.Differences);
+        // The slow host really did miss the budget, so the comparison was skipped rather than coincidentally equal.
+        var regraded = await ModelBench.Core.Grading.GradingPipeline.GradeAsync(JsonUtil.Deserialize<TaskPrompt>(task.PromptJson), JsonUtil.Deserialize<TaskHidden>(task.HiddenJson),
+            JsonUtil.Deserialize<List<ChatMessage>>(stored.TranscriptJson!), null, slow, CancellationToken.None);
+        Assert.False(regraded.Assertions.Single(a => a.Name == "within-budget").Passed);
+        Assert.Equal((true, 1.0), (regraded.Passed, regraded.Score));
+    }
+
     private static async Task<(int, string)> Cli(params string[] args)
     {
         using var sw = new StringWriter();

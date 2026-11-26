@@ -27,7 +27,7 @@ public sealed class RunHostService(Func<BenchDb> openDb, ILogger<RunHostService>
     {
         if (_pending.ContainsKey(runId)) throw new InvalidOperationException("this run is already queued or executing in this process");
         ResolvedModel model;
-        using (var db = openDb()) model = RunService.PrepareResume(db, runId, catalog, allowConfigChange: false);
+        using (var db = openDb()) model = RunService.PrepareResume(db, runId, catalog);
         Enqueue(runId, model, retryInfra);
     }
 
@@ -51,6 +51,10 @@ public sealed class RunHostService(Func<BenchDb> openDb, ILogger<RunHostService>
                 var executor = new RunExecutor(ProviderFactory.Create(p.Model), p.Model, new DockerSandbox());
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(p.Cts.Token, stoppingToken);
                 await executor.ExecuteAsync(db, id, linked.Token, p.RetryInfra);
+            }
+            catch (RunLeaseException ex)
+            {
+                log.LogWarning("run {RunId} not executed: {Reason}", id, ex.Message); // another executor owns it; leave its status alone
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

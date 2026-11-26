@@ -171,7 +171,16 @@ namespace ModelBench.Core.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("GradingVersion")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Label")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LeaseExpiresMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("LeaseOwner")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Mode")

@@ -73,7 +73,7 @@ public class ConcurrencyAndResumeTests
         Assert.Equal(RunStatus.Cancelled, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status);
         Assert.DoesNotContain(db.Attempts.AsNoTracking().Where(a => a.RunId == run.Id).ToList(), a => a.Outcome == AttemptOutcome.Pending);
 
-        var resumed = RunService.PrepareResume(db, run.Id, ModelCatalog.Parse(TestKit.ModelsJson(server.BaseUrl)), false);
+        var resumed = RunService.PrepareResume(db, run.Id, ModelCatalog.Parse(TestKit.ModelsJson(server.BaseUrl)));
         await Exec(resumed).ExecuteAsync(db, run.Id, default);
         AssertOneTerminalRowPerItem(db, run.Id, 6, 2);
         Assert.Equal(RunStatus.Completed, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status);
@@ -109,7 +109,7 @@ public class ConcurrencyAndResumeTests
         db.Attempts.Add(new Attempt { RunId = run.Id, TaskId = tasks[2].Id, Outcome = AttemptOutcome.Pending });
         db.SaveChanges();
 
-        var m = RunService.PrepareResume(db, run.Id, ModelCatalog.Parse(TestKit.ModelsJson(server.BaseUrl)), false);
+        var m = RunService.PrepareResume(db, run.Id, ModelCatalog.Parse(TestKit.ModelsJson(server.BaseUrl)));
         await Exec(m).ExecuteAsync(db, run.Id, default);
         Assert.Equal(3, server.Calls); // task 0 is kept
         Assert.Equal(AttemptOutcome.Passed, db.Attempts.Single(a => a.TaskId == tasks[0].Id).Outcome);
@@ -145,7 +145,7 @@ public class ConcurrencyAndResumeTests
         Assert.All(rows, a => Assert.Equal((true, 1), (a.Outcome is AttemptOutcome.Passed or AttemptOutcome.Failed, a.Retries)));
     }
 
-    [Fact] public async Task ChangedModelConfigurationIsRefusedWithADiffUnlessAllowed()
+    [Fact] public async Task ChangedModelConfigurationIsAlwaysRefusedWithADiff()
     {
         using var dir = new TempDir();
         using var db = dir.OpenDb();
@@ -154,13 +154,80 @@ public class ConcurrencyAndResumeTests
         var run = RunService.CreateRun(db, suite.Id, TestKit.Model(server.BaseUrl), ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), "mine");
         var changed = ModelCatalog.Parse(TestKit.ModelsJson(server.BaseUrl).Replace("\"maxTokens\":512", "\"maxTokens\":999"));
 
-        var ex = Assert.Throws<InvalidOperationException>(() => RunService.PrepareResume(db, run.Id, changed, false));
+        // MB-005: no override exists, so a run's attempts can never mix model configurations.
+        var ex = Assert.Throws<InvalidOperationException>(() => RunService.PrepareResume(db, run.Id, changed));
         Assert.Contains("maxTokens: 512 -> 999", ex.Message);
-        Assert.Contains("--allow-config-change", ex.Message);
+        Assert.Contains("start a new run", ex.Message);
+        Assert.Equal("mine", db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Label);
+    }
 
-        Assert.Equal(999, RunService.PrepareResume(db, run.Id, changed, true).MaxTokens);
-        RunService.PrepareResume(db, run.Id, changed, true);
-        Assert.Equal("mine [config changed on resume]", db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Label);
+    [Fact] public async Task ASecondExecutorIsRefusedWhileTheLeaseIsHeldAndNoInferenceIsDuplicated()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        await using var server = await FakeServer.StartAsync(Slow(300));
+        var suite = TestKit.MakeSuite(db, 4);
+        var model = TestKit.Model(server.BaseUrl);
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null);
+        var started = new TaskCompletionSource();
+        var first = Exec(model, TimeSpan.FromMilliseconds(100));
+        first.AttemptCompleted += _ => started.TrySetResult();
+        var running = first.ExecuteAsync(db, run.Id, default);
+        await started.Task;
+
+        // Another process: its own connection, both entry points.
+        using (var other = BenchDb.Open(db.DbPath))
+        {
+            await Assert.ThrowsAsync<RunLeaseException>(() => Exec(model).ExecuteAsync(other, run.Id, default));
+            Assert.Throws<RunLeaseException>(() => RunService.PrepareResume(other, run.Id, ModelCatalog.Parse(TestKit.ModelsJson(server.BaseUrl))));
+        }
+        await running;
+        Assert.Equal(4, server.Calls);
+        AssertOneTerminalRowPerItem(db, run.Id, 4, 1);
+        var done = db.Runs.AsNoTracking().Single(r => r.Id == run.Id);
+        Assert.Equal((RunStatus.Completed, (Guid?)null, (long?)null), (done.Status, done.LeaseOwner, done.LeaseExpiresMs)); // released
+    }
+
+    [Fact] public async Task AnExpiredLeaseFromACrashedExecutorCanBeTakenOver()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        await using var server = await FakeServer.StartAsync((_, _) => FakeReply.Text("<answer>1</answer>"));
+        var suite = TestKit.MakeSuite(db, 2);
+        var model = TestKit.Model(server.BaseUrl);
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null);
+        run.Status = RunStatus.Running; // the owner died without releasing
+        run.LeaseOwner = Guid.NewGuid();
+        run.LeaseExpiresMs = DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeMilliseconds();
+        db.SaveChanges();
+
+        var m = RunService.PrepareResume(db, run.Id, ModelCatalog.Parse(TestKit.ModelsJson(server.BaseUrl)));
+        await Exec(m).ExecuteAsync(db, run.Id, default);
+        Assert.Equal(RunStatus.Completed, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status);
+        AssertOneTerminalRowPerItem(db, run.Id, 2, 1);
+    }
+
+    [Fact] public async Task RetriedAttemptReportsUsageUnavailableAndCountsTheFailedTryInDuration()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var n = 0;
+        // First request fails after 300 ms (retryable 500); the retry succeeds with known usage.
+        await using var server = await FakeServer.StartAsync((_, _) => Interlocked.Increment(ref n) == 1 ? SlowError() : FakeReply.Text("<answer>1</answer>"));
+        var suite = TestKit.MakeSuite(db, 1);
+        var model = TestKit.Model(server.BaseUrl);
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(1, 1, 5), null);
+        await Exec(model).ExecuteAsync(db, run.Id, default);
+
+        var a = db.Attempts.AsNoTracking().Include(x => x.Metrics).Single(x => x.RunId == run.Id);
+        Assert.Equal(1, a.Retries);
+        double? V(string name) => a.Metrics.Single(m => m.Name == name).Value;
+        Assert.All(new[] { MetricNames.InputTokens, MetricNames.OutputTokens, MetricNames.ModelCalls, MetricNames.CostUsd },
+            name => Assert.Equal(Provenance.Unavailable, a.Metrics.Single(m => m.Name == name).Provenance));
+        Assert.True(V(MetricNames.DurationMs) >= 300, $"duration {V(MetricNames.DurationMs)} ms excludes the failed try");
+        Assert.Null(Reports.Summarize(db, run.Id).CostPerSuccess);
+
+        static FakeReply SlowError() { Thread.Sleep(300); return FakeReply.Error(500); }
     }
 
     [Fact] public async Task ModifiedSuiteIsRefused()
@@ -171,10 +238,10 @@ public class ConcurrencyAndResumeTests
         var suite = TestKit.MakeSuite(db, 2);
         var run = RunService.CreateRun(db, suite.Id, TestKit.Model(server.BaseUrl), ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null);
         var catalog = ModelCatalog.Parse(TestKit.ModelsJson(server.BaseUrl));
-        RunService.PrepareResume(db, run.Id, catalog, false);
+        RunService.PrepareResume(db, run.Id, catalog);
         db.Tasks.First(t => t.SuiteId == suite.Id).PromptJson += " ";
         db.SaveChanges();
-        Assert.Contains("content hash", Assert.Throws<InvalidOperationException>(() => RunService.PrepareResume(db, run.Id, catalog, false)).Message);
+        Assert.Contains("content hash", Assert.Throws<InvalidOperationException>(() => RunService.PrepareResume(db, run.Id, catalog)).Message);
     }
 
     [Fact] public async Task CancelFlagSetFromAnotherConnectionStopsTheExecutor()
@@ -336,6 +403,6 @@ public class RunCliTests
         File.WriteAllText(dir.File("models.json"), TestKit.ModelsJson(server.BaseUrl).Replace("\"maxTokens\":512", "\"maxTokens\":9"));
         using var o4 = new StringWriter();
         Assert.Equal(1, await ModelBench.Cli.CliApp.RunAsync([.. common, "resume", run.Id.ToString()], o4, o4));
-        Assert.Contains("--allow-config-change", o4.ToString());
+        Assert.Contains("start a new run", o4.ToString());
     }
 }

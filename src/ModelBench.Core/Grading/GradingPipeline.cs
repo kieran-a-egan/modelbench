@@ -19,6 +19,12 @@ public sealed record GradingResult(double Score, bool Passed, string? FinalText,
 /// <summary>Strip reasoning, extract the answer, run every grader, score as the weighted mean of assertions.</summary>
 public static class GradingPipeline
 {
+    /// <summary>
+    /// Bump whenever a change can move an existing attempt's Score or Passed. Stored on Run.GradingVersion.
+    /// 1: original. 2: end-to-end ranking, exact numbers, executed-only tool credit, performance gated on correctness and unscored (issue #1).
+    /// </summary>
+    public const int Version = 2;
+
     public static async Task<GradingResult> GradeAsync(
         TaskPrompt prompt, TaskHidden hidden, IReadOnlyList<ChatMessage> transcript,
         JsonElement? finalEnvState, ISandbox sandbox, CancellationToken ct)

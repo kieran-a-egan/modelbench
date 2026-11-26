@@ -102,7 +102,7 @@ modelbench run start --suite <suite> --model strata/inkling-2-mini-sq-15@high [o
 modelbench run list
 modelbench run show <run> [--failures]
 modelbench run cancel <run>
-modelbench run resume <run> [--retry-infra] [--allow-config-change]
+modelbench run resume <run> [--retry-infra]
 modelbench run regrade <run> [--check]
 ```
 
@@ -110,7 +110,7 @@ modelbench run regrade <run> [--check]
 
 `run cancel` asks the process executing the run (this or another one) to stop; it polls the flag every two seconds.
 
-`run resume` re-executes missing, pending and cancelled attempts; `--retry-infra` also redoes InfraError and Timeout attempts (their retry counts accumulate). It refuses if the suite no longer matches its hashes, or if the model's configuration differs from the run's snapshot (a per-field diff is printed) unless `--allow-config-change` is given, which marks the run label `[config changed on resume]`. Do not resume a run that is still executing in another process.
+`run resume` re-executes missing, pending and cancelled attempts; `--retry-infra` also redoes InfraError and Timeout attempts (their retry counts accumulate). It refuses if the suite no longer matches its hashes, or if the model's configuration differs from the run's snapshot (a per-field diff is printed; start a new run for a new configuration). It also refuses a run that another process is executing; a run left behind by a crashed process can be resumed about 30 seconds after the crash.
 
 `run regrade` is described under Reproducibility.
 
@@ -163,12 +163,15 @@ The `manual` provider entry in `models.json` needs no URL or key.
 
 `run show` prints, in order:
 
-- **Attempt outcomes**: `Passed`, `Failed` (a model failure: wrong or malformed answer, never retried), `InfraError` (provider or sandbox failure after retries), `Timeout`, `Cancelled`, `Pending`. InfraError, Timeout and Cancelled are **excluded** from pass rate, mean score and consistency, and are counted separately so a flaky server cannot masquerade as a weak model.
-- **Pass rate and mean score.** An attempt passes when every required assertion passes. Its score is the weighted mean of its assertion scores, so a partially right answer scores between 0 and 1. The `answer-format` assertion is required but weighs 0: it can fail an attempt without inflating a wrong answer's score.
+- **Attempt outcomes**: `Passed`, `Failed` (a model failure: wrong or malformed answer, never retried), `InfraError` (provider or sandbox failure after retries), `Timeout`, `Cancelled`, `Pending`. InfraError, Timeout and Cancelled are **excluded** from the graded pass rate, mean score and consistency, and are counted separately so a flaky server cannot masquerade as a weak model.
+- **End-to-end rate**: passes / (graded + timeouts). A timeout is the model running out of its own time budget, so it counts as a failure here. The leaderboard ranks by this, so a model that times out on most tasks cannot rank above one that answers them.
+- **Completion**: (graded + timeouts) / attempts. Below 100% means infra errors or cancellations hid part of the run; treat such a run's numbers with care.
+- **Graded pass rate and mean score.** An attempt passes when every required assertion passes. Its score is the weighted mean of its assertion scores, so a partially right answer scores between 0 and 1. The `answer-format` assertion is required but weighs 0: it can fail an attempt without inflating a wrong answer's score.
 - **Consistency**: the fraction of tasks with the same pass/fail result on every repeat. It only means something with `--repeats` of 2 or more.
 - **Slices** by family, category and complexity.
 - **Metrics** with coverage (how many attempts have the value): input, output and reasoning tokens, cost, estimated energy.
-- **Cost per success**: total cost divided by the number of passes.
+- **Cost per success**: total cost divided by the number of passes. Not reported when any attempt's cost is unknown, for example after a retry (the failed request's usage is never reported, so it is Unavailable rather than counted as zero).
+- **Grading version**: the scoring methodology the run was graded with. Runs of different versions are listed separately and cannot be compared.
 
 `--failures` lists every failed assertion with its expected value, actual value and a diagnostic. The dashboard shows the same plus the raw prompts and responses of each attempt.
 
@@ -254,7 +257,7 @@ Code families (code-generation, debugging) run candidate Python and C# in Docker
 - 256 MB memory (no swap), 1 CPU, at most 64 processes,
 - a host-enforced wall-clock limit (the case timeout plus 5 s grace, then `docker kill`) and a 1 MB output cap.
 
-Test inputs go in; expected outputs never do. The container returns outputs and the host compares them. Performance budgets use the host's clock and include container start-up, so they depend on machine load; run benchmarks that use them on a quiet machine. If Docker is missing or the images are not built, code attempts become `InfraError` (and are excluded from scores) rather than failing the model. Non-code families do not need Docker.
+Test inputs go in; expected outputs never do. The container returns outputs and the host compares them. Performance budgets use the host's clock and include container start-up, so they depend on machine load. They are therefore reported (the `within-budget` assertion) but not scored: a correct but slow solution passes, and only correct output can be within budget. If Docker is missing or the images are not built, code attempts become `InfraError` (and are excluded from scores) rather than failing the model. Non-code families do not need Docker.
 
 ## Reproducibility
 
@@ -268,7 +271,7 @@ Because graders never call a model, a differing regrade always means a grader, f
 
 ## Dashboard
 
-`modelbench web` serves the dashboard on `http://127.0.0.1:5180` and opens a browser (`--port`, `--no-browser`; Ctrl+C stops it). It waits for its own dashboard process to answer with a per-launch token, so another service on the same port is never mistaken for it; if the dashboard exits or does not answer within 30 seconds, the command fails. It uses the same `--db`/`--models` resolution as every other command. It needs the dashboard installed next to the CLI by `install.ps1`; from a checkout, `dotnet run --project src/ModelBench.Web` does the same (set `MODELBENCH_DB` and `MODELBENCH_MODELS` to choose files). It has Models (with a masked editor for `models.json`), Suites, Runs (start, progress, cancel), per-mode leaderboards, breakdowns, history, compare, task and attempt detail with raw prompts and responses, and CSV/JSON exports. On a run's page, **Resume** appears for Cancelled, Failed and Running runs, with a checkbox to retry infrastructure errors; if the suite or model configuration changed, the refusal is shown on the page (use the CLI's `--allow-config-change` to override). The dashboard executes runs one at a time in the background of the web process.
+`modelbench web` serves the dashboard on `http://127.0.0.1:5180` and opens a browser (`--port`, `--no-browser`; Ctrl+C stops it). It waits for its own dashboard process to answer with a per-launch token, so another service on the same port is never mistaken for it; if the dashboard exits or does not answer within 30 seconds, the command fails. It uses the same `--db`/`--models` resolution as every other command. It needs the dashboard installed next to the CLI by `install.ps1`; from a checkout, `dotnet run --project src/ModelBench.Web` does the same (set `MODELBENCH_DB` and `MODELBENCH_MODELS` to choose files). It has Models (with a masked editor for `models.json`), Suites, Runs (start, progress, cancel), per-mode leaderboards, breakdowns, history, compare, task and attempt detail with raw prompts and responses, and CSV/JSON exports. On a run's page, **Resume** appears for Cancelled, Failed and Running runs, with a checkbox to retry infrastructure errors; if the suite or model configuration changed, or another process is executing the run, the refusal is shown on the page. The dashboard executes runs one at a time in the background of the web process.
 
 ## Troubleshooting
 
@@ -282,7 +285,8 @@ Because graders never call a model, a differing regrade always means a grader, f
 | Many `InfraError` attempts | The endpoint is down, rate-limited (HTTP 429/5xx) or timed out. Retries use backoff and `Retry-After`. Fix the cause and `run resume <run> --retry-infra`. |
 | Code attempts are `InfraError` | Docker is not running or images are missing. Start Docker and `modelbench sandbox build`. |
 | `suite has no ToolAssisted tasks` | The run `--mode` does not match the suite's task modes. Generate a suite with families of that mode. |
-| `model configuration ... changed since the run started` | `models.json` differs from the run's snapshot. Revert it, or `--allow-config-change`. |
+| `model configuration ... changed since the run started` | `models.json` differs from the run's snapshot. Revert it, or start a new run with the new configuration. |
+| `run ... is being executed by another process` | Another CLI or dashboard is running it. Wait, or `run cancel` it. After a crash, retry in about 30 seconds. |
 | `suite ... no longer matches its content hash` | The suite rows were modified; the run cannot be trusted or resumed. |
 | `database ... predates schema migrations` | An old database file; delete or rename it. |
 | Leaderboard lacks a run | Only Completed runs appear, grouped per mode and suite hash; use `--mode` and `--all-runs`. |

@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Numerics;
 using System.Text.Json;
 using ModelBench.Core.Sandbox;
 
@@ -19,13 +21,26 @@ internal static class CodeSupport
         var l => throw new ArgumentException($"unknown language '{l}'"),
     };
 
-    /// <summary>JSON structural equality; numbers match within an absolute tolerance, recursively.</summary>
+    /// <summary>
+    /// The one JSON number equality used by every grader. Zero tolerance is exact: integers as BigInteger, then decimal
+    /// (so 1 == 1.0 == 1e0), and double only beyond decimal's range. A positive tolerance is an absolute difference in double.
+    /// </summary>
+    public static bool NumberEqual(JsonElement a, JsonElement b, double tol = 0)
+    {
+        if (tol > 0) return Math.Abs(a.GetDouble() - b.GetDouble()) <= tol;
+        const NumberStyles integer = NumberStyles.AllowLeadingSign;
+        if (BigInteger.TryParse(a.GetRawText(), integer, CultureInfo.InvariantCulture, out var ia)
+            && BigInteger.TryParse(b.GetRawText(), integer, CultureInfo.InvariantCulture, out var ib)) return ia == ib;
+        return a.TryGetDecimal(out var da) && b.TryGetDecimal(out var db) ? da == db : a.GetDouble() == b.GetDouble();
+    }
+
+    /// <summary>JSON structural equality; numbers compare with NumberEqual, recursively.</summary>
     public static bool JsonEqual(JsonElement a, JsonElement b, double tol = 0)
     {
         if (a.ValueKind != b.ValueKind) return false;
         switch (a.ValueKind)
         {
-            case JsonValueKind.Number: return Math.Abs(a.GetDouble() - b.GetDouble()) <= tol;
+            case JsonValueKind.Number: return NumberEqual(a, b, tol);
             case JsonValueKind.String: return a.GetString() == b.GetString();
             case JsonValueKind.Array:
                 return a.GetArrayLength() == b.GetArrayLength() && a.EnumerateArray().Zip(b.EnumerateArray()).All(p => JsonEqual(p.First, p.Second, tol));
@@ -43,5 +58,6 @@ internal static class CodeSupport
         r.TimedOut ? "timed out"
         : r.CompileErrors is not null ? "did not compile: " + r.CompileErrors
         : r.Cases.Count != expectedCases ? "crashed: " + r.StdErrTail
+        : r.Cases.Where((c, i) => c.Index != i).Any() ? "malformed result: case indices are not 0.." + (expectedCases - 1) + " in order"
         : null;
 }

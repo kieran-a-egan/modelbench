@@ -18,6 +18,23 @@ public class CodeFamilyTests
 
     private static GeneratedTask Gen(string family, int c, long seed) => FamilyRegistry.Get(family).Generate(new Rng(seed), c);
 
+    [Fact] public void SuitesUpToCapacityHaveDistinctReproduciblePromptsAndBeyondItFailWithTheCapacity()
+    {
+        // MB-006: the visible prompt pool is finite (one per coding spec at a complexity); exceeding it is a clear error, never a silent repeat.
+        for (var c = 1; c <= 5; c++)
+        {
+            var ex = Assert.Throws<InvalidOperationException>(() => SuiteGenerator.Generate(new SuiteSpec("big", 3, [new FamilySpec("code-generation", c, 200)])));
+            var capacity = int.Parse(System.Text.RegularExpressions.Regex.Match(ex.Message, @"ran out after (\d+)").Groups[1].Value);
+            Assert.InRange(capacity, 1, 199);
+            Assert.Contains("capacity", ex.Message);
+
+            var a = SuiteGenerator.Generate(new SuiteSpec("full", 3, [new FamilySpec("code-generation", c, capacity)]));
+            var b = SuiteGenerator.Generate(new SuiteSpec("full", 3, [new FamilySpec("code-generation", c, capacity)]));
+            Assert.Equal(capacity, a.Tasks.Select(t => t.PromptJson).Distinct().Count());
+            Assert.Equal(a.ContentHash, b.ContentHash);
+        }
+    }
+
     [Theory, MemberData(nameof(Families))]
     public void ValidatesManySeedsAtEveryComplexity(string family)
     {
@@ -140,6 +157,28 @@ public class CodeFamilyTests
                 // Expected values are structurally absent: the wire request has only these fields.
                 Assert.Equal(["action", "code", "entryPoint", "inputs", "nonce", "repetitions"], JsonNode.Parse(json)!.AsObject().Select(p => p.Key).Order());
             }
+        }
+    }
+}
+
+public class PerformanceBudgetCalibrationTests
+{
+    [Fact] public async Task EveryBudgetSeparatesTheReferenceFromTheQuadraticAnswer()
+    {
+        // Performance is reported, not scored (MB-002), so the quadratic answer passes the task; the report must still tell them apart.
+        var sb = await SandboxEnv.Require();
+        var perfTasks = CodeTasks.All.Where(t => t.Perf is not null).ToList();
+        Assert.NotEmpty(perfTasks);
+        foreach (var t in perfTasks)
+        {
+            var args = t.Perf!.Gen(new Rng(1));
+            var cfg = JsonUtil.Element(new { language = t.Lang, entryPoint = t.Entry, args, expected = t.Solve(CodeKit.Elems(args)), budgetMs = t.Perf.BudgetMs });
+            async Task<IReadOnlyList<AssertionOutcome>> Grade(string code) => await GraderRegistry.Get("performance").GradeAsync(new GraderSpec("performance", "p", cfg),
+                new GradingContext(TaskPrompt.Simple("q", AnswerFormat.CodeBlock), new TaskHidden([]), code, code, [], null, sb, default));
+            var fast = await Grade(t.Ref);
+            Assert.True(fast.All(o => o.Passed), $"{t.Id} reference: {fast[1].Diagnostic}");
+            var slow = await Grade(t.Perf.Quadratic); // usually killed at the budget, so its correctness is not observable here
+            Assert.False(slow[1].Passed, $"{t.Id} quadratic should be reported over budget: {slow[1].Diagnostic}");
         }
     }
 }

@@ -23,7 +23,7 @@
 @if (groups.Count == 0) { <p>No completed @CurrentMode runs yet.</p> }
 @foreach (var g in groups)
 {
-    <h2>@g.SuiteName <small class="muted">hash @g.SuiteHash[..12]</small></h2>
+    <h2>@g.SuiteName <small class="muted">hash @g.SuiteHash[..12], grading v@g.GradingVersion</small></h2>
     @if (View == "breakdown")
     {
         var b = breakdowns[g.SuiteHash];
@@ -44,13 +44,13 @@
     {
         <div class="scroll">
         <table>
-            <tr><th>Model</th><th>Run</th><th>Date</th><th>Pass rate</th><th class="num">Mean score</th><th class="num">Graded</th><th class="num">Infra / timeouts</th>
+            <tr><th>Model</th><th>Run</th><th>Date</th><th>End-to-end</th><th>Graded pass rate</th><th class="num">Completion</th><th class="num">Mean score</th><th class="num">Graded</th><th class="num">Infra / timeouts</th>
                 <th class="num">Consistency</th><th class="num">Median TTFT ms</th><th class="num">Mean tok/s</th><th class="num">Cost USD</th><th class="num">Cost / success</th></tr>
             @foreach (var r in g.Rows)
             {
                 <tr>
                     <td><a href="/history?model=@Fmt.Q(r.ModelRef)&suite=@r.SuiteHash">@r.ModelRef</a></td><td><a href="/runs/@r.RunId">@Fmt.Short(r.RunId)</a></td><td>@Fmt.Date(r.CreatedAt)</td>
-                    <td><PassBar Value="r.PassRate" /></td><td class="num">@Fmt.Score(r.MeanScore)</td><td class="num">@r.Graded</td><td class="num">@r.InfraErrors / @r.Timeouts</td>
+                    <td><PassBar Value="r.EndToEndRate" /></td><td><PassBar Value="r.PassRate" /></td><td class="num">@Fmt.Pct(r.Completion)</td><td class="num">@Fmt.Score(r.MeanScore)</td><td class="num">@r.Graded</td><td class="num">@r.InfraErrors / @r.Timeouts</td>
                     <td class="num">@Fmt.Pct(r.Consistency)</td><td class="num">@Fmt.Num(r.Metric(MetricNames.TimeToFirstTokenMs).Median)</td>
                     <td class="num">@Fmt.Num(r.Metric(MetricNames.ThroughputTps).Mean)</td>
                     <td class="num">@Fmt.Num(r.Metric(MetricNames.CostUsd).Total) <span class="muted">(@r.Metric(MetricNames.CostUsd).Coverage)</span></td>
@@ -76,6 +76,6 @@
     {
         using var db = Open();
         groups = Reports.Leaderboard(db, CurrentMode, null, All && View != "breakdown");
-        breakdowns = View == "breakdown" ? groups.ToDictionary(g => g.SuiteHash, g => Reports.Breakdown(db, CurrentMode, g.SuiteHash)) : [];
+        breakdowns = View == "breakdown" ? groups.Select(g => g.SuiteHash).Distinct().ToDictionary(h => h, h => Reports.Breakdown(db, CurrentMode, h)) : []; // one hash can have several grading versions
     }
 }
