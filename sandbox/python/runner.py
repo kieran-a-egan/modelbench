@@ -92,7 +92,7 @@ def run_case(code_obj, entry, args, reps):
 
 
 def reap():
-    """The runner is PID 1, so it inherits a case's leftover processes: stop and reap them, and clear /tmp, so nothing outlives its case."""
+    """The runner is PID 1, so it inherits a case's leftover processes: stop and reap them, and clear every channel a case could leave state in (/tmp, /dev/shm, POSIX queues, SysV IPC), so nothing outlives its case."""
     if os.getpid() != 1:
         return  # only as the container's init; never signal every process of a host user
     try:
@@ -104,11 +104,16 @@ def reap():
             os.waitpid(-1, 0)
         except ChildProcessError:
             break
-    for e in os.scandir("/tmp"):  # the tmpfs is the other state a case could leave for the next
-        if e.is_dir(follow_symlinks=False):
-            shutil.rmtree(e.path, ignore_errors=True)
-        else:
-            os.unlink(e.path)
+    for d in ("/tmp", "/dev/shm", "/dev/mqueue"):  # the writable mounts are the other state a case could leave for the next
+        for e in os.scandir(d):
+            if e.is_dir(follow_symlinks=False):
+                shutil.rmtree(e.path, ignore_errors=True)
+            else:
+                os.unlink(e.path)
+    libc = ctypes.CDLL(None)  # SysV objects outlive their creator; IPC_RMID (0) the ones the case (same uid) made
+    for name, rm in (("shm", lambda i: libc.shmctl(i, 0, None)), ("msg", lambda i: libc.msgctl(i, 0, None)), ("sem", lambda i: libc.semctl(i, 0, 0))):
+        for line in open("/proc/sysvipc/" + name).read().splitlines()[1:]:
+            rm(int(line.split()[1]))
 
 
 def fork_case(code_obj, entry, args, reps):

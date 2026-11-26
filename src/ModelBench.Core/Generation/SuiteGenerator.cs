@@ -45,7 +45,7 @@ public static class SuiteGenerator
                     // Random picks hit a small pool's last free prompt slowly (22 prompts: 1 in 10 suites would miss it in 50 tries).
                     if (++attempt == 1000)
                         throw new InvalidOperationException($"{fam.Id} complexity {fs.Complexity} cannot produce {fs.Count} distinct tasks: "
-                            + $"its visible prompts ran out after {i} (the family's capacity at this complexity); lower the count or split it across complexities");
+                            + $"its visible prompts ran out after {i} (the family's capacity at this complexity), or they are already used by an earlier entry of the same family in this suite (other complexities share prompts); lower the count or split it across complexities");
                 }
                 var check = fam.Validate(generated);
                 if (!check.Ok)

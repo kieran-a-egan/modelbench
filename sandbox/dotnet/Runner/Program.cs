@@ -103,14 +103,18 @@ static object Case(int index, byte[] image, string entry, JsonElement args, int 
     }
 }
 
-// The runner is PID 1, so it inherits a case's leftover processes: stop and reap them, and clear /tmp, so nothing outlives its case.
+// The runner is PID 1, so it inherits a case's leftover processes: stop and reap them, and clear every channel a case could leave state in (/tmp, /dev/shm, POSIX queues, SysV IPC), so nothing outlives its case.
 static void Reap()
 {
     if (Environment.ProcessId != 1) return; // only as the container's init; never signal every process of a host user
     Native.kill(-1, 9); // every process but init
     while (Native.waitpid(-1, IntPtr.Zero, 0) > 0) { }
-    foreach (var e in new DirectoryInfo("/tmp").EnumerateFileSystemInfos()) // the tmpfs is the other state a case could leave for the next
-        try { if (e is DirectoryInfo d) d.Delete(true); else e.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+    foreach (var dir in new[] { "/tmp", "/dev/shm", "/dev/mqueue" }) // the writable mounts are the other state a case could leave for the next
+        foreach (var e in new DirectoryInfo(dir).EnumerateFileSystemInfos())
+            try { if (e is DirectoryInfo d) d.Delete(true); else e.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+    foreach (var l in File.ReadAllLines("/proc/sysvipc/shm").Skip(1)) Native.shmctl(int.Parse(l.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]), 0, IntPtr.Zero); // SysV objects outlive their creator; IPC_RMID (0) the ones the case (same uid) made
+    foreach (var l in File.ReadAllLines("/proc/sysvipc/msg").Skip(1)) Native.msgctl(int.Parse(l.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]), 0, IntPtr.Zero);
+    foreach (var l in File.ReadAllLines("/proc/sysvipc/sem").Skip(1)) Native.semctl(int.Parse(l.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]), 0, 0);
 }
 
 // The case process: one input, a fresh runtime, and no route to the runner's stdout.
@@ -181,4 +185,8 @@ static class Native
 
     [DllImport("libc.so.6", SetLastError = true)]
     public static extern int waitpid(int pid, IntPtr status, int options);
+
+    [DllImport("libc.so.6")] public static extern int shmctl(int id, int cmd, IntPtr buf);
+    [DllImport("libc.so.6")] public static extern int msgctl(int id, int cmd, IntPtr buf);
+    [DllImport("libc.so.6")] public static extern int semctl(int id, int num, int cmd);
 }

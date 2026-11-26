@@ -94,21 +94,26 @@ public class RunnerIntegrityTests
     [Fact] public async Task PythonStateNeverCarriesToTheNextCase()
     {
         var r = await Py("""
-            import builtins, os
+            import builtins, os, ctypes
+            libc = ctypes.CDLL(None, use_errno=True)
             count = 0
             def f(x):
                 global count
                 count += 1
-                seen = [getattr(builtins, "mark", None), os.path.exists("/tmp/mark"), len([p for p in os.listdir("/proc") if p.isdigit()])]
+                seen = [getattr(builtins, "mark", None), os.path.exists("/tmp/mark"), os.path.exists("/dev/shm/mark"), os.path.exists("/dev/mqueue/mark"), libc.shmget(4242, 0, 0) >= 0, libc.msgget(4242, 0) >= 0, libc.semget(4242, 0, 0) >= 0, len([p for p in os.listdir("/proc") if p.isdigit()])]
                 builtins.mark = 1
                 builtins.sorted = lambda *a, **k: [42]
                 open("/tmp/mark", "w").write("1")
+                open("/dev/shm/mark", "w").write("1")
+                libc.mq_open.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+                libc.mq_open(b"/mark", 0o102, 0o600, None)  # O_CREAT|O_RDWR
+                libc.shmget(4242, 100, 0o1600); libc.msgget(4242, 0o1600); libc.semget(4242, 1, 0o1600)  # IPC_CREAT
                 if os.fork() == 0:  # a leftover process that would otherwise live into the next case
                     import time; time.sleep(60); os._exit(0)
                 return [count] + seen
             """, "f", 10_000, "[0]", "[1]", "[2]");
-        // Every case: a fresh module, untouched builtins, an empty /tmp, and only the runner and itself alive.
-        Assert.All(Enumerable.Range(0, 3), i => Assert.Equal("[1,null,false,2]", Out(r, i)));
+        // Every case: a fresh module, untouched builtins, empty /tmp, /dev/shm, message queues and SysV IPC, and only the runner and itself alive.
+        Assert.All(Enumerable.Range(0, 3), i => Assert.Equal("[1,null,false,false,false,false,false,false,2]", Out(r, i)));
     }
 
     [Fact] public async Task CSharpStateNeverCarriesToTheNextCase()

@@ -35,6 +35,14 @@ public class CodeFamilyTests
         }
     }
 
+    [Fact] public void ComplexitiesThatSharePromptsShareCapacityAcrossEntries()
+    {
+        // Each entry passes the per-entry capacity check (12 and 22), but complexity 1's prompts are a subset of complexity 2's.
+        var ex = Assert.Throws<InvalidOperationException>(() => SuiteGenerator.Generate(new SuiteSpec("shared", 3,
+            [new FamilySpec("code-generation", 1, 12), new FamilySpec("code-generation", 2, 22)])));
+        Assert.Contains("already used by an earlier entry of the same family", ex.Message);
+    }
+
     [Fact] public void EveryTaskVariantIsReachedAndValidAtEveryComplexityItServes()
     {
         Assert.Equal(CodeTasks.All.Count, CodeTasks.All.Select(t => t.Id).Distinct().Count());
@@ -58,7 +66,7 @@ public class CodeFamilyTests
     [Fact] public void GoldenSuiteHashPinsTheGenerator()
     {
         var hash = SuiteGenerator.Generate(new SuiteSpec("golden", 7, Enumerable.Range(1, 5).Select(c => new FamilySpec("code-generation", c, 2)).ToList())).ContentHash;
-        Assert.True(hash == "5b34d4a29c62d633e17002d02e46cb89f1067f2c8ade6b04423cf69cee3cfa69", $"golden hash is now {hash}");
+        Assert.True(hash == "bc2e466c73816d4b75648ea77423d119f8ab3353d95edeeed5aa3017a23faf15", $"golden hash is now {hash}");
     }
 
     [Theory, MemberData(nameof(Families))]

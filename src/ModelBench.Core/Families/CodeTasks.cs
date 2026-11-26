@@ -579,7 +579,7 @@ internal static class CodeTasks
             """),
 
         new("first-bracket-error", "csharp", "Solution.FirstError", "public static int FirstError(string s)",
-            "The string consists of the bracket characters ()[]{}. Return -1 when it is balanced. Otherwise return the 0-based index of the first closing bracket that does not close the most recent unclosed opening bracket of the same kind (including a closing bracket with nothing open); if there is no such bracket but some brackets are left open, return the length of the string.",
+            "The string consists of the bracket characters ()[]{}. Return -1 when it is balanced. Otherwise return the 0-based index of the first closing bracket that does not match the most recent still-unclosed opening bracket of any kind, that is the top of the stack (including a closing bracket with nothing open; so in \"([)]\" the first \")\" is the error); if there is no such bracket but some brackets are left open, return the length of the string.",
             Brackets,
             a =>
             {

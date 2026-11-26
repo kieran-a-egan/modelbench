@@ -16,7 +16,7 @@ Candidate-generated code is untrusted. It must run with no network, no secrets, 
 - Candidate code never runs in the runner's process (#3). For every case the runner starts a fresh child process (Python: `fork`; C#: `Runner.dll --case`), which runs one input and returns `{output, error, elapsedMs}` on a private pipe. The child's other file descriptors lead nowhere (`/dev/null`). The runner:
   - checks the child's exit status independently of what it wrote, and takes the case index itself;
   - is PID 1 and not dumpable (`prctl(PR_SET_DUMPABLE, 0)`), so a child of the same user cannot open `/proc/1/fd/1` or `/proc/1/mem`;
-  - after each case kills and reaps every leftover process and empties `/tmp`, so no state reaches the next case.
+  - after each case kills and reaps every leftover process and empties `/tmp`, `/dev/shm` and `/dev/mqueue` and removes SysV IPC objects, so no state reaches the next case.
   Compile and inspect run no candidate code and stay in the runner's process.
 - Results come back on stdout as `MBRESULT:<nonce>:<base64 json>`, written only by the runner. The nonce is random per request. The host accepts the frame only when there is exactly one matching line and the container exited 0.
 - The host enforces `TimeoutMs + 5s` by running `docker kill <name>`, and caps stdout/stderr capture at 1 MB.
