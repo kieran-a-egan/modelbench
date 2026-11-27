@@ -115,7 +115,7 @@ public static class Export
         {
             case null: return "";
             case string s:
-                if (s.Length > 0 && "=+-@\t\r".Contains(s[0]) && !IsPlainNumber(s)) s ="'" + s;
+                if (s.Length > 0 && "=+-@\t\r".Contains(s[0]) && !IsPlainNumber(s)) s = "'" + s;
                 return s.IndexOfAny([',', '"', '\r', '\n']) >= 0 ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
             case double d: return d.ToString("R", CultureInfo.InvariantCulture);
             case bool b: return b ? "true" : "false";

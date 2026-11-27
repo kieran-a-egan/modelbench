@@ -71,7 +71,7 @@ A variant is a set of settings chosen at run time, so the same model can be benc
 ### Energy and pricing
 
 - `cost` turns the provider's reported token counts into `cost_usd` (provenance Calculated). If the provider reports no tokens, or no `cost` is configured, cost is Unavailable.
-- `energy` gives `energy_kwh = inference time x watts / run concurrency` (inference time excludes retry back-off; concurrent attempts share the machine's watts) and `energy_cost_usd = kWh x pricePerKwh`, both provenance **Estimated**. It is a wall-clock estimate, not a measurement.
+- `energy` gives `energy_kwh = inference time x watts / attempts in flight` (inference time excludes retry back-off; the attempts running at the same time, sampled when the attempt starts and ends, share the machine's watts) and `energy_cost_usd = kWh x pricePerKwh`, both provenance **Estimated**. It is a wall-clock estimate, not a measurement.
 
 ### API kinds
 

@@ -11,7 +11,7 @@ public static class MetricCalculator
     /// <param name="usageComplete">False when requests outside <paramref name="responses"/> were made (a retried try, a replaced attempt):
     /// tokens, model calls and cost are then Unavailable rather than understated (MB-009).</param>
     /// <param name="inferenceTime">Time spent inside tries, excluding retry back-off; energy is charged on this (default: wallTime).</param>
-    /// <param name="concurrency">The run's worker count: the machine's watts are shared by concurrent attempts, so each bills 1/N of them.</param>
+    /// <param name="concurrency">Attempts in flight alongside this one (itself included): the machine's watts are shared by them, so each bills 1/N.</param>
     public static List<Metric> Compute(IReadOnlyList<ModelResponse> responses, TimeSpan wallTime, Pricing? pricing, EnergyProfile? energy, bool usageComplete = true,
         TimeSpan? inferenceTime = null, int concurrency = 1)
     {
