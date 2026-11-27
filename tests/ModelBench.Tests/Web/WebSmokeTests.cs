@@ -139,6 +139,17 @@ public class WebSmokeTests(WebFixture fx) : IClassFixture<WebFixture>
         Assert.Equal(good, File.ReadAllText(dir.File("models.json")));
     }
 
+    [Fact] public void ModelsFileWithMissingConfiguredPathReadsEmptyAndCreatesOnSave()
+    {
+        using var dir = new TempDir();
+        var f = new ModelsFile(dir.File("new.json"));
+        Assert.False(f.Exists);
+        Assert.Empty(f.Catalog().List());
+        Assert.Contains("providers", f.MaskedText());
+        Assert.Null(f.Save(TestKit.ModelsJson("http://127.0.0.1:9/v1")));
+        Assert.True(File.Exists(dir.File("new.json")));
+    }
+
     [Fact] public void ModelsFileSavesWhenAnEnvReferencedVariableIsUnset()
     {
         using var dir = new TempDir();

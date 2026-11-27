@@ -122,8 +122,8 @@ public sealed partial class ModelCatalog
         => (provider["models"] as JsonArray ?? throw new InvalidOperationException($"provider '{id}' has no models array")).Select(n => n!.AsObject());
 
     private static T EnergyField<T>(JsonObject energy, string field, string reference)
-        => energy[field] is JsonValue v && v.TryGetValue<T>(out var x) ? x
-            : throw new InvalidOperationException($"'{reference}': provider energy.{field} is missing or not a number");
+        => energy[field] is JsonValue v && v.TryGetValue<T>(out var x) && Comparer<T>.Default.Compare(x, default!) >= 0 ? x
+            : throw new InvalidOperationException($"'{reference}': provider energy.{field} is missing, not a number or negative");
 
     private static JsonObject Clone(JsonNode? n) => n is JsonObject o ? (JsonObject)o.DeepClone() : [];
 

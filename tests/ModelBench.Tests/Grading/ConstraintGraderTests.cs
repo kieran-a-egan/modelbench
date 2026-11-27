@@ -85,6 +85,20 @@ public class ConstraintGraderTests
         Assert.Contains(constraint, Failed(r));
     }
 
+    [Fact] public async Task ScheduleStartNearIntMaxFailsInsteadOfOverflowing()
+    {
+        var r = await Grade("schedule", Schedule, 7, Ans("""{"schedule":[{"id":1,"start":2147483647},{"id":2,"start":3},{"id":3,"start":5}]}"""));
+        Assert.False(r.Passed);
+        Assert.Contains("deadline[1]", Failed(r));
+    }
+
+    [Fact] public async Task KnapsackWeightSumDoesNotOverflow()
+    {
+        const string inst = """{"capacity":10,"items":[{"id":1,"weight":2147483647,"value":1},{"id":2,"weight":2147483647,"value":1}]}""";
+        var r = await Grade("knapsack", inst, 1, Ans("""{"items":[1,2]}"""));
+        Assert.Contains("capacity", Failed(r));
+    }
+
     [Fact] public async Task ColoringOptimalSuboptimalAndInvalid()
     {
         var best = await Grade("coloring", Coloring, 3, Ans("""{"colors":[1,2,3,1]}"""));

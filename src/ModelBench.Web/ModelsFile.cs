@@ -10,13 +10,14 @@ public sealed class ModelsFile(string? configuredPath)
     public const string Mask = "***";
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
-    /// <summary>Configured path, else the CLI lookup (./models.json, ~/.modelbench/models.json), else where a new file would be created.</summary>
-    public string Path => ModelCatalog.Locate(configuredPath)
+    /// <summary>Configured path (even if the file does not exist yet), else the CLI lookup (./models.json, ~/.modelbench/models.json), else where a new file would be created.</summary>
+    public string Path => !string.IsNullOrWhiteSpace(configuredPath) ? System.IO.Path.GetFullPath(configuredPath)
+        : ModelCatalog.Locate(null)
         ?? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".modelbench", "models.json");
 
     public bool Exists => File.Exists(Path);
 
-    public ModelCatalog Catalog() => ModelCatalog.Parse(File.ReadAllText(Path));
+    public ModelCatalog Catalog() => ModelCatalog.Parse(Exists ? File.ReadAllText(Path) : "{\"providers\":{}}");
 
     private static bool Literal(string? s) => !string.IsNullOrEmpty(s) && !s.Contains("{env:");
 

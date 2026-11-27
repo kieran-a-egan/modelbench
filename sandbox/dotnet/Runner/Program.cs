@@ -49,8 +49,9 @@ else
     if (!emit.Success)
     {
         result["compiled"] = false;
-        result["compileErrors"] = string.Join("\n", emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)
+        var errors = string.Join("\n", emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)
             .Select(d => $"line {d.Location.GetLineSpan().StartLinePosition.Line + 1}: {d.Id} {d.GetMessage()}"));
+        result["compileErrors"] = errors.Length > 500 ? errors[..500] : errors; // same cap as the Python runner's MAX_ERR
     }
     else if (action == "run")
         result["cases"] = Run(ms.ToArray());

@@ -169,6 +169,13 @@ public class ModelCatalogTests
     [Fact] public void UnknownFieldsAreIgnoredAndToolCallsDefaultTrue()
         => Assert.True(ModelCatalog.Parse("""{"providers":{"p":{"api":"manual","future":1,"models":[{"id":"m","whatever":{"a":1}}]}},"other":5}""").Resolve("p/m").ToolCalls);
 
+    [Theory]
+    [InlineData("""{"watts":-1,"pricePerKwh":0.3}""")]
+    [InlineData("""{"watts":300,"pricePerKwh":-0.3}""")]
+    public void NegativeEnergyIsRejected(string energy)
+        => Assert.Contains("energy.", Assert.Throws<InvalidOperationException>(() => ModelCatalog.Parse(
+            """{"providers":{"p":{"api":"manual","energy":""" + energy + ""","models":[{"id":"m"}]}}}""").Resolve("p/m")).Message);
+
     [Fact] public void LocateHonoursExplicitPath()
     {
         Assert.Throws<FileNotFoundException>(() => ModelCatalog.Locate("definitely/not/here.json"));

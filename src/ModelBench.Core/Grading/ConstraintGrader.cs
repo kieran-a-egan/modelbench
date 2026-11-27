@@ -82,7 +82,7 @@ public sealed class ConstraintGrader : IGrader
         var ids = Ints(answer, "items");
         var valid = ids is not null && ids.All(items.ContainsKey);
         var unique = ids is not null && ids.Distinct().Count() == ids.Count;
-        var weight = valid ? ids!.Sum(i => items[i].GetProperty("weight").GetInt32()) : 0;
+        var weight = valid ? ids!.Sum(i => (long)items[i].GetProperty("weight").GetInt32()) : 0; // long: huge ids/duplicates must not overflow
         var fits = valid && weight <= capacity;
         var checks = new List<AssertionOutcome>
         {
@@ -90,7 +90,7 @@ public sealed class ConstraintGrader : IGrader
             C("no-duplicates", unique, "an item id appears more than once"),
             C("capacity", fits, valid ? $"total weight {weight} exceeds capacity {capacity}" : "no valid item list"),
         };
-        return (checks, valid && unique && fits ? ids!.Sum(i => items[i].GetProperty("value").GetInt32()) : null);
+        return (checks, valid && unique && fits ? ids!.Sum(i => (long)items[i].GetProperty("value").GetInt32()) : null);
     }
 
     private static (List<AssertionOutcome>, double?) Schedule(JsonElement inst, JsonElement answer)
@@ -111,7 +111,7 @@ public sealed class ConstraintGrader : IGrader
         var idsValid = shapeOk && entries.All(e => known.Contains(e.Id));
         var unique = shapeOk && entries.Select(e => e.Id).Distinct().Count() == entries.Count;
         var complete = idsValid && unique && entries.Count == tasks.Count;
-        var start = new Dictionary<int, int>();
+        var start = new Dictionary<int, long>();
         if (idsValid) foreach (var e in entries) start.TryAdd(e.Id, e.Start);
 
         var checks = new List<AssertionOutcome>
@@ -124,16 +124,16 @@ public sealed class ConstraintGrader : IGrader
         {
             var has = start.TryGetValue(t.Id, out var s);
             checks.Add(C($"release[{t.Id}]", has && s >= t.R, has ? $"starts at {s}, before release {t.R}" : "not scheduled"));
-            checks.Add(C($"deadline[{t.Id}]", has && s + t.D <= t.Dl, has ? $"ends at {s + t.D}, after deadline {t.Dl}" : "not scheduled"));
+            checks.Add(C($"deadline[{t.Id}]", has && s + (long)t.D <= t.Dl, has ? $"ends at {s + (long)t.D}, after deadline {t.Dl}" : "not scheduled"));
         }
         for (var a = 0; a < tasks.Count; a++)
             for (var b = a + 1; b < tasks.Count; b++)
             {
                 var (x, y) = (tasks[a], tasks[b]);
                 var both = start.TryGetValue(x.Id, out var sx) & start.TryGetValue(y.Id, out var sy);
-                checks.Add(C($"no-overlap[{x.Id},{y.Id}]", both && (sx + x.D <= sy || sy + y.D <= sx), both ? $"tasks {x.Id} and {y.Id} overlap" : "a task is not scheduled"));
+                checks.Add(C($"no-overlap[{x.Id},{y.Id}]", both && (sx + (long)x.D <= sy || sy + (long)y.D <= sx), both ? $"tasks {x.Id} and {y.Id} overlap" : "a task is not scheduled"));
             }
-        return (checks, checks.All(c => c.Passed) ? tasks.Max(t => start[t.Id] + t.D) : null);
+        return (checks, checks.All(c => c.Passed) ? tasks.Max(t => start[t.Id] + (long)t.D) : null);
     }
 
     private static (List<AssertionOutcome>, double?) Coloring(JsonElement inst, JsonElement answer)
