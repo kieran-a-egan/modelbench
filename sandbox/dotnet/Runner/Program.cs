@@ -51,7 +51,7 @@ else
         result["compiled"] = false;
         var errors = string.Join("\n", emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)
             .Select(d => $"line {d.Location.GetLineSpan().StartLinePosition.Line + 1}: {d.Id} {d.GetMessage()}"));
-        result["compileErrors"] = errors.Length > 500 ? errors[..500] : errors; // same cap as the Python runner's MAX_ERR
+        result["compileErrors"] = errors.Length > 500 ? errors[..(char.IsHighSurrogate(errors[499]) ? 499 : 500)] : errors; // same cap as the Python runner's MAX_ERR; never split a surrogate pair (invalid UTF-16 would fail serialisation)
     }
     else if (action == "run")
         result["cases"] = Run(ms.ToArray());
