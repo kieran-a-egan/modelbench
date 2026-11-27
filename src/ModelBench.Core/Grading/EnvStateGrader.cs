@@ -43,19 +43,10 @@ public sealed class EnvStateGrader : IGrader
                 return;
         }
         var absent = act is null or { ValueKind: JsonValueKind.Null };
-        var ok = !noState && (exp.ValueKind == JsonValueKind.Null ? absent : !absent && Equal(exp, act!.Value));
+        var ok = !noState && (exp.ValueKind == JsonValueKind.Null ? absent : !absent && CodeSupport.JsonEqual(exp, act!.Value));
         var expectedText = exp.ValueKind == JsonValueKind.Null ? "absent" : exp.GetRawText();
         var actualText = absent ? "missing" : act!.Value.GetRawText();
         results.Add(AssertionOutcome.Check(path, ok, expectedText, actualText,
             noState ? "no environment state" : exp.ValueKind == JsonValueKind.Null ? $"{path} should be absent but is {actualText}" : $"{path}: expected {expectedText} but got {actualText}"));
     }
-
-    private static bool Equal(JsonElement a, JsonElement b) => a.ValueKind == b.ValueKind && a.ValueKind switch
-    {
-        JsonValueKind.String => a.GetString() == b.GetString(),
-        JsonValueKind.Number => a.GetDouble() == b.GetDouble(),
-        JsonValueKind.Array => a.GetArrayLength() == b.GetArrayLength() && a.EnumerateArray().Zip(b.EnumerateArray()).All(t => Equal(t.First, t.Second)),
-        JsonValueKind.Object => a.EnumerateObject().Count() == b.EnumerateObject().Count() && a.EnumerateObject().All(p => b.TryGetProperty(p.Name, out var v) && Equal(p.Value, v)),
-        _ => true, // true/true, false/false
-    };
 }

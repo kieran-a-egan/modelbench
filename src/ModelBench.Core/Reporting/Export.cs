@@ -66,9 +66,9 @@ public static class Export
             case "runs":
                 var s = Reports.Summarize(db, runId);
                 Row(w, "run_id", "suite_id", "suite_name", "suite_hash", "model_ref", "mode", "status", "repeats", "timeout_seconds", "label", "created_at", "completed_at",
-                    "attempts", "graded", "passed", "infra_errors", "timeouts", "cancelled", "pass_rate", "mean_score", "consistency", "cost_per_success");
+                    "attempts", "graded", "passed", "infra_errors", "timeouts", "cancelled", "end_to_end_rate", "completion", "authoritative", "pass_rate", "mean_score", "consistency", "cost_per_success", "grading_version");
                 Row(w, run.Id, run.SuiteId, run.Suite!.Name, run.Suite.ContentHash, run.ModelRef, run.Mode, run.Status, run.Repeats, run.TimeoutSeconds, run.Label, run.CreatedAt, run.CompletedAt,
-                    s.Attempts, s.Graded, s.Passed, s.InfraErrors, s.Timeouts, s.Cancelled, s.PassRate, s.MeanScore, s.Consistency, s.CostPerSuccess);
+                    s.Attempts, s.Graded, s.Passed, s.InfraErrors, s.Timeouts, s.Cancelled, s.EndToEndRate, s.Completion, s.Authoritative, s.PassRate, s.MeanScore, s.Consistency, s.CostPerSuccess, s.GradingVersion);
                 break;
             case "attempts":
                 Row(w, [.. new[] { "attempt_id", "run_id", "task_index", "family", "category", "complexity", "repeat", "outcome", "score", "retries", "error", "final_text" }, .. MetricColumns]);

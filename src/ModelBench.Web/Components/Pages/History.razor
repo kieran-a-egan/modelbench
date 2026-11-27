@@ -5,10 +5,10 @@
 <h1>History: @Model</h1>
 <p><a href="/leaderboard">Back to leaderboard</a>. Completed runs of this model on suite hash <code>@Suite</code>.</p>
 <table>
-    <tr><th>Run</th><th>Date</th><th>Mode</th><th>Label</th><th>Pass rate</th><th class="num">Mean score</th><th class="num">Graded</th><th class="num">Infra / timeouts</th></tr>
+    <tr><th>Run</th><th>Date</th><th>Mode</th><th>Label</th><th>Grading</th><th>End-to-end</th><th>Graded pass rate</th><th class="num">Mean score</th><th class="num">Graded</th><th class="num">Infra / timeouts</th></tr>
     @foreach (var r in rows)
     {
-        <tr><td><a href="/runs/@r.RunId">@Fmt.Short(r.RunId)</a></td><td>@Fmt.Date(r.CreatedAt)</td><td>@r.Mode</td><td>@r.Label</td><td><PassBar Value="r.PassRate" /></td>
+        <tr><td><a href="/runs/@r.RunId">@Fmt.Short(r.RunId)</a></td><td>@Fmt.Date(r.CreatedAt)</td><td>@r.Mode</td><td>@r.Label</td><td>v@r.GradingVersion</td><td><PassBar Value="r.EndToEndRate" /></td><td><PassBar Value="r.PassRate" /></td>
             <td class="num">@Fmt.Score(r.MeanScore)</td><td class="num">@r.Graded</td><td class="num">@r.InfraErrors / @r.Timeouts</td></tr>
     }
 </table>

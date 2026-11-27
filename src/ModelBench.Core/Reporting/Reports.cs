@@ -24,14 +24,22 @@ public sealed record RunSummary(
     IReadOnlyList<(AttemptOutcome Outcome, int Count)> Outcomes, int Attempts, int Graded, int Passed, int InfraErrors, int Timeouts, int Cancelled,
     double? PassRate, double? MeanScore, double? Consistency,
     IReadOnlyList<Slice> ByCategory, IReadOnlyList<Slice> ByComplexity, IReadOnlyList<Slice> ByFamily,
-    IReadOnlyDictionary<string, Agg> Metrics, double? CostPerSuccess)
+    IReadOnlyDictionary<string, Agg> Metrics, double? CostPerSuccess, int GradingVersion, int Planned)
 {
     public int Excluded => InfraErrors + Timeouts + Cancelled;
+    /// <summary>Attempts the model is accountable for: graded ones plus timeouts (it ran out of its budget). Infra errors and cancellations are not.</summary>
+    public int Accountable => Graded + Timeouts;
+    /// <summary>Passed / (graded + timeouts): the ranking figure (MB-001). PassRate is graded accuracy only.</summary>
+    public double? EndToEndRate => Accountable == 0 ? null : (double)Passed / Accountable;
+    /// <summary>Share of PLANNED attempts (mode-matching tasks x repeats, not stored rows) that are accountable; below 1 means infra errors, cancellations or missing attempts hid part of the run.</summary>
+    public double? Completion => Planned == 0 ? null : (double)Accountable / Planned;
+    /// <summary>Only a fully covered run (Completion 1) is authoritative; incomplete runs are listed after the ranked ones and marked.</summary>
+    public bool Authoritative => Completion == 1;
     public Agg Metric(string name) => Metrics.TryGetValue(name, out var a) ? a : new Agg(0, Attempts, 0, null);
 }
 
 public sealed record Matrix(IReadOnlyList<string> Models, IReadOnlyList<string> Columns, double?[][] Cells);
-public sealed record LeaderboardGroup(string SuiteName, string SuiteHash, IReadOnlyList<RunSummary> Rows);
+public sealed record LeaderboardGroup(string SuiteName, string SuiteHash, IReadOnlyList<RunSummary> Rows, int GradingVersion);
 public sealed record BreakdownResult(Matrix ByCategory, Matrix ByComplexity);
 public sealed record FailedAssertion(string Grader, string Name, string? Expected, string? Actual, string? Diagnostic, double Score, double Weight, bool Required);
 public sealed record FailedAttempt(Guid AttemptId, int TaskIndex, string FamilyId, int Complexity, int Repeat, AttemptOutcome Outcome, double? Score, string? Error, IReadOnlyList<FailedAssertion> Assertions);
@@ -47,6 +55,7 @@ public sealed record MetricDelta(string Name, double? A, double? B)
 }
 public sealed record Comparison(RunSummary A, RunSummary B, IReadOnlyList<TaskDiff> Tasks, IReadOnlyList<MetricDelta> Metrics)
 {
+    public double? EndToEndDelta => A.EndToEndRate is { } a && B.EndToEndRate is { } b ? b - a : null;
     public double? PassRateDelta => A.PassRate is { } a && B.PassRate is { } b ? b - a : null;
     public double? MeanScoreDelta => A.MeanScore is { } a && B.MeanScore is { } b ? b - a : null;
     public int Count(TaskChange c) => Tasks.Count(t => t.Change == c);
@@ -97,7 +106,8 @@ public static class Reports
             graded.Count == 0 ? null : graded.Average(r => r.Score ?? 0),
             repeated.Count == 0 ? null : (double)repeated.Count(g => g.Select(r => r.Outcome).Distinct().Count() == 1) / repeated.Count,
             Slices(graded, r => r.Category), Slices(graded, r => r.Complexity.ToString()), Slices(graded, r => r.FamilyId),
-            agg, passed > 0 && cost.N == cost.M ? cost.Sum / passed : null);
+            agg, passed > 0 && cost.N == cost.M ? cost.Sum / passed : null, run.GradingVersion,
+            db.Tasks.Count(t => t.SuiteId == run.SuiteId && t.Mode == (run.Mode == ExecutionMode.Manual ? ExecutionMode.SingleTurn : run.Mode)) * run.Repeats);
     }
 
     /// <summary>Completed runs of one mode, grouped by suite content hash (only comparable within a hash). Latest run per (model, hash) unless allRuns.</summary>
@@ -111,17 +121,20 @@ public static class Reports
     {
         var runs = db.Runs.AsNoTracking().Include(r => r.Suite).Where(r => r.Mode == mode && r.Status == RunStatus.Completed).ToList()
             .Where(r => hash is null || r.Suite!.ContentHash == hash).ToList();
-        if (!allRuns) runs = runs.GroupBy(r => (r.ModelRef, r.Suite!.ContentHash)).Select(g => g.OrderByDescending(r => r.CreatedAt).First()).ToList();
-        return runs.GroupBy(r => r.Suite!.ContentHash)
-            .Select(g => new LeaderboardGroup(g.First().Suite!.Name, g.Key, g.Select(r => Summarize(db, r.Id))
-                .OrderByDescending(s => s.PassRate ?? -1).ThenByDescending(s => s.MeanScore ?? -1).ThenBy(s => s.ModelRef, StringComparer.Ordinal).ThenByDescending(s => s.CreatedAt).ToList()))
-            .OrderBy(g => g.SuiteName, StringComparer.Ordinal).ThenBy(g => g.SuiteHash, StringComparer.Ordinal).ToList();
+        if (!allRuns) runs = runs.GroupBy(r => (r.ModelRef, r.Suite!.ContentHash, r.GradingVersion)).Select(g => g.OrderByDescending(r => r.CreatedAt).First()).ToList();
+        // Comparable only within one suite hash AND one grading methodology.
+        return runs.GroupBy(r => (r.Suite!.ContentHash, r.GradingVersion))
+            .Select(g => new LeaderboardGroup(g.First().Suite!.Name, g.Key.ContentHash, g.Select(r => Summarize(db, r.Id))
+                .OrderByDescending(s => s.Authoritative).ThenByDescending(s => s.EndToEndRate ?? -1).ThenByDescending(s => s.PassRate ?? -1).ThenByDescending(s => s.MeanScore ?? -1)
+                .ThenBy(s => s.ModelRef, StringComparer.Ordinal).ThenByDescending(s => s.CreatedAt).ToList(), g.Key.GradingVersion))
+            .OrderBy(g => g.SuiteName, StringComparer.Ordinal).ThenBy(g => g.SuiteHash, StringComparer.Ordinal).ThenByDescending(g => g.GradingVersion).ToList();
     }
 
     /// <summary>Model x category and model x complexity pass-rate matrices over the latest completed run per model.</summary>
     public static BreakdownResult Breakdown(BenchDb db, ExecutionMode mode, string suiteHash)
     {
-        var rows = Groups(db, mode, suiteHash, false).SelectMany(g => g.Rows).ToList();
+        // Groups is filtered to one hash, so groups differ only by grading version: use the newest methodology.
+        var rows = Groups(db, mode, suiteHash, false).MaxBy(g => g.GradingVersion)?.Rows.ToList() ?? [];
         Matrix Build(Func<RunSummary, IReadOnlyList<Slice>> pick)
         {
             var cols = rows.SelectMany(r => pick(r).Select(s => s.Key)).Distinct().Order(StringComparer.Ordinal).ToList();
@@ -148,6 +161,8 @@ public static class Reports
         var b = Summarize(db, runB);
         if (a.SuiteHash != b.SuiteHash)
             throw new InvalidOperationException($"runs are not comparable: suite content hashes differ ({a.SuiteHash[..12]} vs {b.SuiteHash[..12]})");
+        if (a.GradingVersion != b.GradingVersion)
+            throw new InvalidOperationException($"runs are not comparable: graded with different methodologies (v{a.GradingVersion} vs v{b.GradingVersion})");
         var ra = AttemptRows(db, runA).Where(r => IsGraded(r.Outcome)).GroupBy(r => r.TaskIndex).ToDictionary(g => g.Key);
         var rb = AttemptRows(db, runB).Where(r => IsGraded(r.Outcome)).GroupBy(r => r.TaskIndex).ToDictionary(g => g.Key);
         var tasks = db.Tasks.AsNoTracking().Where(t => t.SuiteId == a.SuiteId).OrderBy(t => t.Index).Select(t => new { t.Index, t.FamilyId, t.Complexity }).ToList()

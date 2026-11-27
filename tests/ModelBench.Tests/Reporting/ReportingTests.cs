@@ -23,6 +23,66 @@ public class ReportingTests
         Assert.Equal(["math"], s.ByCategory.Select(c => c.Key).ToArray());
     }
 
+    private static A[] Seq(params AttemptOutcome[] outcomes) => [.. outcomes.Select((o, i) => new A(i % 4, i / 4, o))];
+
+    [Fact] public void TimeoutsCountAgainstEndToEndRankingAndInfraErrorsShowAsIncompletion()
+    {
+        // MB-001: 1 pass + 9 timeouts used to rank at 100% (graded only), above 9 passes + 1 fail at 90%.
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = ReportSeed.AddSuite(db);
+        var timeouts = ReportSeed.AddRun(db, suite, "m/times-out", ST, ReportSeed.T0, Seq([Passed, .. Enumerable.Repeat(AttemptOutcome.Timeout, 11)]));
+        var solid = ReportSeed.AddRun(db, suite, "m/solid", ST, ReportSeed.T0, Seq([.. Enumerable.Repeat(Passed, 11), Failed]));
+        var flaky = ReportSeed.AddRun(db, suite, "m/infra", ST, ReportSeed.T0, Seq(Passed, Passed, InfraError, Cancelled));
+
+        var t = Reports.Summarize(db, timeouts.Id);
+        Assert.Equal((1.0, 1.0 / 12, 1.0), (t.PassRate, t.EndToEndRate, t.Completion));
+        var s = Reports.Summarize(db, solid.Id);
+        Assert.Equal((11.0 / 12, 11.0 / 12, 1.0), (s.PassRate, s.EndToEndRate, s.Completion));
+        var f = Reports.Summarize(db, flaky.Id);
+        Assert.Equal((1.0, 1.0, 0.5), (f.PassRate, f.EndToEndRate, f.Completion)); // infra/cancel are not the model's fault, but are disclosed
+
+        // Complete runs rank first: m/infra has the best rate but only half of its attempts are accountable.
+        Assert.Equal(["m/solid", "m/times-out", "m/infra"], Reports.Leaderboard(db, ST).Single().Rows.Select(r => r.ModelRef).ToArray());
+    }
+
+    [Fact] public void IncompleteCoverageIsMarkedAndNeverRanksAboveACompleteRun()
+    {
+        // PR #5 review: 1 pass + 9 infra errors used to rank at 100% ahead of 9 passes + 1 fail; an interrupted run with one stored row looked complete.
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = ReportSeed.AddSuite(db);
+        var infra = ReportSeed.AddRun(db, suite, "m/infra", ST, ReportSeed.T0, Seq([Passed, .. Enumerable.Repeat(InfraError, 7)]));
+        var solid = ReportSeed.AddRun(db, suite, "m/solid", ST, ReportSeed.T0, Seq([.. Enumerable.Repeat(Passed, 7), Failed]));
+        var interrupted = ReportSeed.AddRun(db, suite, "m/interrupted", ST, ReportSeed.T0, new A(0, 0, Passed));
+        interrupted.Repeats = 2; // planned: 4 tasks x 2 repeats, but only one result was stored
+        db.SaveChanges();
+
+        var i = Reports.Summarize(db, interrupted.Id);
+        Assert.Equal((1.0, 8, 0.125, false), (i.EndToEndRate, i.Planned, i.Completion, i.Authoritative));
+        Assert.False(Reports.Summarize(db, infra.Id).Authoritative);
+        Assert.True(Reports.Summarize(db, solid.Id).Authoritative);
+        var rows = Reports.Leaderboard(db, ST).Single().Rows;
+        Assert.Equal("m/solid", rows[0].ModelRef);
+        Assert.Equal([false, false], rows.Skip(1).Select(r => r.Authoritative).ToArray()); // listed, after the ranked run
+    }
+
+    [Fact] public void RunsGradedWithDifferentMethodologiesAreNeverRankedOrComparedTogether()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = ReportSeed.AddSuite(db);
+        var oldRun = ReportSeed.AddRun(db, suite, "m/a", ST, ReportSeed.T0, new A(0, 0, Passed));
+        var newRun = ReportSeed.AddRun(db, suite, "m/a", ST, ReportSeed.T0.AddDays(1), new A(0, 0, Failed));
+        oldRun.GradingVersion = 1;
+        db.SaveChanges();
+
+        var board = Reports.Leaderboard(db, ST);
+        Assert.Equal([Core.Grading.GradingPipeline.Version, 1], board.Select(g => g.GradingVersion).ToArray());
+        Assert.All(board, g => Assert.Single(g.Rows));
+        Assert.Contains("different methodologies", Assert.Throws<InvalidOperationException>(() => Reports.Compare(db, oldRun.Id, newRun.Id)).Message);
+    }
+
     [Fact] public void NoGradedAttemptsMeansNoPassRate()
     {
         using var dir = new TempDir();

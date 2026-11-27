@@ -29,7 +29,8 @@
     <table>
         <tr><th></th><th>A</th><th>B</th><th class="num">Delta</th></tr>
         <tr><th scope="row">Run</th><td><a href="/runs/@cmp.A.RunId">@Fmt.Short(cmp.A.RunId)</a> @cmp.A.ModelRef</td><td><a href="/runs/@cmp.B.RunId">@Fmt.Short(cmp.B.RunId)</a> @cmp.B.ModelRef</td><td></td></tr>
-        <tr><th scope="row">Pass rate</th><td><PassBar Value="cmp.A.PassRate" /></td><td><PassBar Value="cmp.B.PassRate" /></td><td class="num">@Fmt.Delta(cmp.PassRateDelta)</td></tr>
+        <tr><th scope="row">End-to-end</th><td><PassBar Value="cmp.A.EndToEndRate" /></td><td><PassBar Value="cmp.B.EndToEndRate" /></td><td class="num">@Fmt.Delta(cmp.EndToEndDelta)</td></tr>
+        <tr><th scope="row">Graded pass rate</th><td><PassBar Value="cmp.A.PassRate" /></td><td><PassBar Value="cmp.B.PassRate" /></td><td class="num">@Fmt.Delta(cmp.PassRateDelta)</td></tr>
         <tr><th scope="row">Mean score</th><td>@Fmt.Score(cmp.A.MeanScore)</td><td>@Fmt.Score(cmp.B.MeanScore)</td><td class="num">@Fmt.Delta(cmp.MeanScoreDelta)</td></tr>
         @foreach (var m in cmp.Metrics)
         {

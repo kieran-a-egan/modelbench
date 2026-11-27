@@ -91,7 +91,7 @@ public sealed class StructuralGrader : IGrader
                 return true;
             case JsonValueKind.String: return e.GetString() == a.GetString();
             case JsonValueKind.Number:
-                return e.TryGetDecimal(out var d1) && a.TryGetDecimal(out var d2) ? d1 == d2 : e.GetDouble() == a.GetDouble();
+                return CodeSupport.NumberEqual(e, a);
             case JsonValueKind.True or JsonValueKind.False: return e.GetBoolean() == a.GetBoolean();
             default: return true; // both null
         }

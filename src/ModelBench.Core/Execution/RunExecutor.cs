@@ -15,6 +15,9 @@ namespace ModelBench.Core.Execution;
 
 public sealed record AttemptProgress(int Done, int Total, Guid TaskId, string FamilyId, int Complexity, int Repeat, AttemptOutcome Outcome, double? Score);
 
+/// <summary>Another executor (this or another process) holds the run's lease. The run itself is untouched.</summary>
+public sealed class RunLeaseException(string message) : InvalidOperationException(message);
+
 /// <summary>
 /// Executes a run's (task x repeat) work items with Run.Concurrency workers, persisting each attempt as it finishes.
 /// Work is queued in (task index, repeat) order; completion order is not deterministic when Concurrency > 1.
@@ -25,18 +28,52 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
 
     public event Action<AttemptProgress>? AttemptCompleted;
 
-    /// <summary>How often the DB's Run.CancelRequested flag is polled (set by 'run cancel' from another process).</summary>
+    /// <summary>How often the DB's Run.CancelRequested flag is polled (set by 'run cancel' from another process) and the lease renewed.</summary>
     public TimeSpan CancelPollInterval { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>A lease not renewed for this long is free to take, so a crashed executor's run can be resumed.</summary>
+    private TimeSpan LeaseTtl => TimeSpan.FromTicks(Math.Max(TimeSpan.FromSeconds(30).Ticks, CancelPollInterval.Ticks * 3));
+
+    private volatile bool _leaseLost;
+    private volatile string? _renewError; // set when renewal kept failing for a whole LeaseTtl
+    private long _lastRenewMs; // last successful renewal (heartbeat or fenced write); read/written atomically on 64-bit
 
     /// <summary>
     /// Runs every missing, Pending or Cancelled attempt (so it is also the resume path). With <paramref name="retryInfra"/>,
     /// InfraError and Timeout attempts are replaced too; their Retries count is added to the new attempt's Retries.
+    /// Holds a database lease on the run throughout (MB-010): a second executor, in any process, gets RunLeaseException.
     /// </summary>
     public async Task ExecuteAsync(BenchDb db, Guid runId, CancellationToken ct, bool retryInfra = false)
     {
         var run = await db.Runs.SingleAsync(r => r.Id == runId, CancellationToken.None);
         await db.Entry(run).ReloadAsync(CancellationToken.None); // the context may hold a stale tracked copy (e.g. from CreateRun)
         if (run.Mode == ExecutionMode.Manual) throw new InvalidOperationException("manual runs are completed with 'manual import'");
+        RunService.RequireCurrentGradingVersion(run);
+
+        var owner = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var expires = now + (long)LeaseTtl.TotalMilliseconds;
+        // One conditional UPDATE: SQLite serialises writers, so exactly one executor gets the row.
+        if (await db.Runs.Where(r => r.Id == runId && (r.LeaseOwner == null || r.LeaseExpiresMs < now))
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.LeaseOwner, owner).SetProperty(r => r.LeaseExpiresMs, expires), CancellationToken.None) == 0)
+            throw new RunLeaseException($"run {runId} is being executed by another process; wait for it, or cancel it with 'run cancel'");
+        _leaseLost = false;
+        _renewError = null;
+        _lastRenewMs = now;
+        try
+        {
+            await ExecuteLeasedAsync(db, run, owner, ct, retryInfra);
+        }
+        finally
+        {
+            await db.Runs.Where(r => r.Id == runId && r.LeaseOwner == owner)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.LeaseOwner, (Guid?)null).SetProperty(r => r.LeaseExpiresMs, (long?)null), CancellationToken.None);
+        }
+    }
+
+    private async Task ExecuteLeasedAsync(BenchDb db, Run run, Guid owner, CancellationToken ct, bool retryInfra)
+    {
+        var runId = run.Id;
         var policy = JsonUtil.Deserialize<RetryPolicy>(run.RetryPolicyJson);
 
         var tasks = await db.Tasks.Where(t => t.SuiteId == run.SuiteId && t.Mode == run.Mode).OrderBy(t => t.Index).ToListAsync(CancellationToken.None);
@@ -46,14 +83,18 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
             : [AttemptOutcome.Pending, AttemptOutcome.Cancelled];
         var prior = (await db.Attempts.Where(a => a.RunId == runId && redo.Contains(a.Outcome)).Select(a => new { a.TaskId, a.RepeatIndex, a.Retries }).ToListAsync(CancellationToken.None))
             .ToDictionary(a => (a.TaskId, a.RepeatIndex), a => a.Retries);
-        await db.Attempts.Where(a => a.RunId == runId && redo.Contains(a.Outcome)).ExecuteDeleteAsync(CancellationToken.None);
-        var finished = (await db.Attempts.Where(a => a.RunId == runId).Select(a => new { a.TaskId, a.RepeatIndex }).ToListAsync(CancellationToken.None))
-            .Select(a => (a.TaskId, a.RepeatIndex)).ToHashSet();
-
+        HashSet<(Guid TaskId, int RepeatIndex)> finished = [];
         run.Status = RunStatus.Running;
         run.CancelRequested = false;
         run.CompletedAt = null;
-        await db.SaveChangesAsync(CancellationToken.None);
+        if (!await WriteFencedAsync(db, runId, owner, async () =>
+            {
+                await db.Attempts.Where(a => a.RunId == runId && redo.Contains(a.Outcome)).ExecuteDeleteAsync(CancellationToken.None);
+                finished = (await db.Attempts.Where(a => a.RunId == runId).Select(a => new { a.TaskId, a.RepeatIndex }).ToListAsync(CancellationToken.None))
+                    .Select(a => (a.TaskId, a.RepeatIndex)).ToHashSet();
+                await db.SaveChangesAsync(CancellationToken.None);
+            }))
+            throw new RunLeaseException($"run {runId}: lease lost to another executor; stopped");
 
         var queue = Channel.CreateUnbounded<(TaskInstance Task, int Repeat)>();
         foreach (var task in tasks)
@@ -65,7 +106,7 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         var done = finished.Count;
         using var work = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var pollStop = new CancellationTokenSource();
-        var poller = PollCancelAsync(db, runId, work, pollStop.Token);
+        var poller = PollCancelAsync(db, runId, owner, work, pollStop.Token);
 
         async Task Worker()
         {
@@ -75,10 +116,13 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
                 await foreach (var (task, repeat) in queue.Reader.ReadAllAsync(CancellationToken.None))
                 {
                     if (work.IsCancellationRequested) break;
-                    var attempt = await RunAttemptAsync(run, task, repeat, policy, work.Token);
+                    var attempt = await RunAttemptAsync(run, task, repeat, policy, prior.ContainsKey((task.Id, repeat)), work.Token);
                     attempt.Retries += prior.GetValueOrDefault((task.Id, repeat));
-                    wdb.Attempts.Add(attempt);
-                    await wdb.SaveChangesAsync(CancellationToken.None);
+                    if (!await WriteFencedAsync(wdb, runId, owner, () => { wdb.Attempts.Add(attempt); return wdb.SaveChangesAsync(CancellationToken.None); }))
+                    {
+                        work.Cancel(); // a stale owner's result is discarded; the other executor redoes this item
+                        break;
+                    }
                     lock (_progressLock)
                         AttemptCompleted?.Invoke(new AttemptProgress(++done, total, task.Id, task.FamilyId, task.Complexity, repeat, attempt.Outcome, attempt.Score));
                 }
@@ -105,31 +149,79 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
             await pollStop.CancelAsync();
             await poller; // the poller shares db, so it must be finished before db is used again
             run.CompletedAt = DateTimeOffset.UtcNow;
-            await db.SaveChangesAsync(CancellationToken.None);
+            // A lost lease means another executor owns the run now; its status is theirs to write (the fence refuses a stale write).
+            await WriteFencedAsync(db, runId, owner, () => db.SaveChangesAsync(CancellationToken.None));
         }
+        if (_leaseLost) throw new RunLeaseException($"run {runId}: lease lost to another executor; stopped");
+        if (_renewError is { } err) throw new RunLeaseException($"run {runId}: could not renew the run lease: {err}; stopped");
     }
 
-    private async Task PollCancelAsync(BenchDb db, Guid runId, CancellationTokenSource work, CancellationToken stop)
+    /// <summary>
+    /// Runs <paramref name="write"/> in one transaction that first renews the lease with a conditional UPDATE (owner and not expired).
+    /// SQLite serialises writers, so a stale owner (lease expired or taken over) gets 0 rows and nothing is committed: returns false.
+    /// </summary>
+    private async Task<bool> WriteFencedAsync(BenchDb db, Guid runId, Guid owner, Func<Task> write)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(CancellationToken.None);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var expires = now + (long)LeaseTtl.TotalMilliseconds;
+        if (await db.Runs.Where(r => r.Id == runId && r.LeaseOwner == owner && r.LeaseExpiresMs > now)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.LeaseExpiresMs, expires), CancellationToken.None) == 0)
+        {
+            _leaseLost = true;
+            return false;
+        }
+        _lastRenewMs = now;
+        await write();
+        await tx.CommitAsync(CancellationToken.None);
+        return true;
+    }
+
+    /// <summary>Each tick renews the lease (stopping the work if another executor took it) and checks the cancel flag.</summary>
+    private async Task PollCancelAsync(BenchDb db, Guid runId, Guid owner, CancellationTokenSource work, CancellationToken stop)
     {
         using var timer = new PeriodicTimer(CancelPollInterval);
         try
         {
             while (await timer.WaitForNextTickAsync(stop))
-                if (await db.Runs.AsNoTracking().Where(r => r.Id == runId).Select(r => r.CancelRequested).SingleAsync(CancellationToken.None))
+            {
+                try
                 {
+                    var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    if (await db.Runs.Where(r => r.Id == runId && r.LeaseOwner == owner)
+                            .ExecuteUpdateAsync(s => s.SetProperty(r => r.LeaseExpiresMs, now + (long)LeaseTtl.TotalMilliseconds), CancellationToken.None) == 0)
+                    {
+                        _leaseLost = true;
+                        await work.CancelAsync();
+                        return;
+                    }
+                    _lastRenewMs = now;
+                    if (await db.Runs.AsNoTracking().Where(r => r.Id == runId).Select(r => r.CancelRequested).SingleAsync(CancellationToken.None))
+                    {
+                        await work.CancelAsync();
+                        return;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // A transient fault (BUSY/IO) is not a lost lease, and every write is fenced anyway: keep polling until the lease may have expired.
+                    if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - _lastRenewMs < (long)LeaseTtl.TotalMilliseconds) continue;
+                    _renewError = ex.Message;
                     await work.CancelAsync();
                     return;
                 }
+            }
         }
         catch (OperationCanceledException) { }
     }
 
-    private async Task<Attempt> RunAttemptAsync(Run run, TaskInstance task, int repeat, RetryPolicy policy, CancellationToken ct)
+    private async Task<Attempt> RunAttemptAsync(Run run, TaskInstance task, int repeat, RetryPolicy policy, bool replacesPrior, CancellationToken ct)
     {
         var attempt = new Attempt { RunId = run.Id, TaskId = task.Id, RepeatIndex = repeat, StartedAt = DateTimeOffset.UtcNow };
         var prompt = JsonUtil.Deserialize<TaskPrompt>(task.PromptJson);
         var hidden = JsonUtil.Deserialize<TaskHidden>(task.HiddenJson);
         EpisodeResult? episode = null;
+        TimeSpan? inference = null; // first try to the end of the successful episode, so retries and back-off count (MB-009)
         var sw = Stopwatch.StartNew();
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(run.TimeoutSeconds));
@@ -137,13 +229,13 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         {
             while (true)
             {
-                try { episode = await EpisodeRunner.RunAsync(run.Mode, prompt, hidden, FamilyRegistry.Get(task.FamilyId), provider, cts.Token); break; }
+                try { episode = await EpisodeRunner.RunAsync(run.Mode, prompt, hidden, FamilyRegistry.Get(task.FamilyId), provider, cts.Token); inference = sw.Elapsed; break; }
                 catch (InfraException ex) when (ex.Retryable && attempt.Retries < policy.MaxRetries)
                 {
                     await Task.Delay(policy.Delay(attempt.Retries++, run.Id, task.Id, repeat, (ex as InfraException)?.RetryAfter), cts.Token);
                 }
             }
-            var graded = await GradingPipeline.GradeAsync(prompt, hidden, episode.Transcript, episode.FinalEnvironmentState, sandbox, cts.Token);
+            var graded = await GradingPipeline.GradeAsync(prompt, hidden, episode.Transcript, episode.FinalEnvironmentState, sandbox, ct); // not cts: the deadline bounds inference only, so slow optional grading cannot Timeout a correct answer
             graded.ApplyTo(attempt);
             attempt.TranscriptJson = JsonUtil.Serialize(episode.Transcript);
             attempt.RawRequestsJson = JsonUtil.Serialize(episode.Responses.Select(r => r.RawRequest));
@@ -164,7 +256,9 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
             attempt.ErrorMessage = ex.Message;
         }
         attempt.CompletedAt = DateTimeOffset.UtcNow;
-        attempt.Metrics.AddRange(MetricCalculator.Compute(episode?.Responses ?? [], episode?.WallTime ?? sw.Elapsed, model.Pricing, model.Energy));
+        // A failed try, or a replaced earlier attempt, consumed usage nobody recorded: report usage Unavailable, never a partial sum.
+        attempt.Metrics.AddRange(MetricCalculator.Compute(episode?.Responses ?? [], inference ?? sw.Elapsed, model.Pricing, model.Energy,
+            usageComplete: episode is not null && attempt.Retries == 0 && !replacesPrior));
         return attempt;
     }
 }

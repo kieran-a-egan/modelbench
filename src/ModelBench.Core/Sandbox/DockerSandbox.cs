@@ -122,8 +122,10 @@ public sealed class DockerSandbox : ISandbox
     internal static SandboxResult? ParseFrame(string stdout, string nonce)
     {
         var prefix = $"MBRESULT:{nonce}:";
-        var line = stdout.Split('\n').LastOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal));
-        if (line is null) return null;
+        // The runner writes exactly one frame. More than one means candidate code learned the nonce and wrote its own (MB-004): unusable.
+        var frames = stdout.Split('\n').Where(l => l.StartsWith(prefix, StringComparison.Ordinal)).Take(2).ToList();
+        if (frames.Count != 1) return null;
+        var line = frames[0];
         try
         {
             using var doc = JsonDocument.Parse(Convert.FromBase64String(line[prefix.Length..].Trim()));

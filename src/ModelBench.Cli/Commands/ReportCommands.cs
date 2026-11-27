@@ -27,11 +27,11 @@ internal static class ReportCommands
             var sid = pr.GetValue(suite) is { } s ? ResolveId(s, db.Suites.Select(x => x.Id).ToList(), "suite") : (Guid?)null;
             foreach (var g in Reports.Leaderboard(db, pr.GetValue(mode), sid, pr.GetValue(all)))
             {
-                w.WriteLine($"\nsuite {S(g.SuiteName)}  hash {g.SuiteHash[..12]}  mode {pr.GetValue(mode)}");
-                Table(w, ["MODEL", "RUN", "DATE", "PASS", "SCORE", "N", "INFRA/TO", "CONSIST", "TTFT MS", "TPS", "COST", "COST/SUCCESS"],
+                w.WriteLine($"\nsuite {S(g.SuiteName)}  hash {g.SuiteHash[..12]}  mode {pr.GetValue(mode)}  grading v{g.GradingVersion}");
+                Table(w, ["MODEL", "RUN", "DATE", "E2E", "GRADED PASS", "COMPLETE", "SCORE", "N", "INFRA/TO", "CONSIST", "TTFT MS", "TPS", "COST", "COST/SUCCESS"],
                     g.Rows.Select(r => new[]
                     {
-                        S(r.ModelRef), Short(r.RunId), r.CreatedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), F(r.PassRate), F(r.MeanScore), r.Graded.ToString(),
+                        S(r.ModelRef) + (r.Authoritative ? "" : " [INCOMPLETE, unranked]"), Short(r.RunId), r.CreatedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), F(r.EndToEndRate), F(r.PassRate), F(r.Completion), F(r.MeanScore), r.Graded.ToString(),
                         $"{r.InfraErrors}/{r.Timeouts}", F(r.Consistency), N(r.Metric(MetricNames.TimeToFirstTokenMs).Median), N(r.Metric(MetricNames.ThroughputTps).Mean),
                         N(r.Metric(MetricNames.CostUsd).Total), N(r.CostPerSuccess),
                     }).ToList());
@@ -61,7 +61,7 @@ internal static class ReportCommands
             var ids = db.Runs.Select(r => r.Id).ToList();
             var c = Reports.Compare(db, ResolveId(pr.GetRequiredValue(a), ids, "run"), ResolveId(pr.GetRequiredValue(b2), ids, "run"));
             w.WriteLine($"A {Short(c.A.RunId)} {S(c.A.ModelRef)}   B {Short(c.B.RunId)} {S(c.B.ModelRef)}");
-            w.WriteLine($"pass rate {F(c.A.PassRate)} -> {F(c.B.PassRate)} ({D(c.PassRateDelta)})   mean score {F(c.A.MeanScore)} -> {F(c.B.MeanScore)} ({D(c.MeanScoreDelta)})");
+            w.WriteLine($"end-to-end {F(c.A.EndToEndRate)} -> {F(c.B.EndToEndRate)} ({D(c.EndToEndDelta)})   graded pass rate {F(c.A.PassRate)} -> {F(c.B.PassRate)} ({D(c.PassRateDelta)})   mean score {F(c.A.MeanScore)} -> {F(c.B.MeanScore)} ({D(c.MeanScoreDelta)})");
             w.WriteLine(string.Join("  ", Enum.GetValues<TaskChange>().Select(t => $"{t} {c.Count(t)}")));
             Table(w, ["METRIC", "A", "B", "DELTA"], c.Metrics.Select(m => new[] { m.Name, N(m.A), N(m.B), D(m.Delta) }).ToList());
             Table(w, ["TASK", "FAMILY", "CX", "CHANGE", "SCORE A", "SCORE B", "DELTA"],
@@ -77,10 +77,10 @@ internal static class ReportCommands
             using var db = cli.OpenDb(pr);
             var id = ResolveId(pr.GetRequiredValue(hSuite), db.Suites.Select(x => x.Id).ToList(), "suite");
             var hash = db.Suites.Where(x => x.Id == id).Select(x => x.ContentHash).Single();
-            Table(w, ["RUN", "DATE", "MODE", "PASS", "SCORE", "N", "INFRA/TO", "LABEL"],
+            Table(w, ["RUN", "DATE", "MODE", "GRADING", "E2E", "GRADED PASS", "SCORE", "N", "INFRA/TO", "LABEL"],
                 Reports.History(db, pr.GetRequiredValue(model), hash).Select(r => new[]
                 {
-                    Short(r.RunId), r.CreatedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture), r.Mode.ToString(), F(r.PassRate), F(r.MeanScore),
+                    Short(r.RunId), r.CreatedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture), r.Mode.ToString(), $"v{r.GradingVersion}", F(r.EndToEndRate), F(r.PassRate), F(r.MeanScore),
                     r.Graded.ToString(), $"{r.InfraErrors}/{r.Timeouts}", S(r.Label),
                 }).ToList());
             return Task.FromResult(0);

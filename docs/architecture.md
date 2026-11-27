@@ -77,6 +77,7 @@ Rules:
 - `SuiteSpec { Name, MasterSeed, Families: [{ Family, Complexity, Count }] }`. Generator versions are recorded per entry at generation time.
 - Each task's seed is `Rng.DeriveSeed(masterSeed, familyId, familyVersion, index)`. The family gets `new Rng(seed)`.
 - Procedural prompts are distinct within a suite. If a prompt repeats, the seed is re-derived with familyId `"<id>#<attempt>"` (attempt 1..49), so the result is still deterministic and `verify` reproduces it. File-defined families repeat tasks by design.
+- Each procedural family has a finite visible-prompt capacity per complexity. `code-generation` has one visible prompt per coding spec in its pool (hidden inputs are random, the visible specification is not), so its capacity is the pool size at that complexity. Asking for more fails with `ran out after N (the family's capacity at this complexity)`; it never repeats a prompt silently (MB-006). More diverse specifications (seeded templates with independent solvers) are a known gap.
 - `TaskInstance.ContentHash` is `SHA256(PromptJson + "\n" + HiddenJson)` as lowercase hex. `Suite.ContentHash` is `SHA256` of the task hashes joined by `\n`, in index order.
 - `Validate` runs on every generated task. Generation fails loudly if validation fails, so it never retries silently with another seed. A family that needs rejection sampling does it *inside* `Generate`, using the same `Rng`.
 - `suite verify <id>` regenerates the suite from `SpecJson` and compares every hash.
@@ -100,18 +101,19 @@ Episodes:
 
 `RunExecutor`:
 - Work items are (task x repeat) pairs, minus attempts already in a terminal outcome. They are queued in (task index, repeat) order; completion order is not deterministic when `Run.Concurrency` > 1. This is what makes resume work.
-- `Run.Concurrency` workers read from a `Channel`. Each worker has its own `BenchDb` context (DbContext is not thread-safe); each attempt is persisted as soon as it finishes, and the unique (RunId, TaskId, RepeatIndex) index guards against duplicates. `AttemptCompleted` is raised serially under a lock.
-- Each attempt has a timeout of `Run.TimeoutSeconds`, enforced with a linked `CancellationTokenSource`. Exceeding it records outcome `Timeout`. There is no overall run deadline.
+- `Run.Concurrency` workers read from a `Channel`. Each worker has its own `BenchDb` context (DbContext is not thread-safe); each attempt is persisted as soon as it finishes, in one transaction that first renews the run lease with a conditional UPDATE on the owner token (a stale owner whose lease expired or was taken over commits nothing; redo deletion and the final status write are fenced the same way, and a heartbeat fault stops the work), and the unique (RunId, TaskId, RepeatIndex) index guards against duplicates. `AttemptCompleted` is raised serially under a lock.
+- Each attempt has a timeout of `Run.TimeoutSeconds`, enforced with a linked `CancellationTokenSource`. Exceeding it records outcome `Timeout`. The deadline covers inference (including retries) only: grading runs outside it, bounded by the sandbox's own limits, so a slow optional performance run can never turn a correct answer into a `Timeout`. There is no overall run deadline.
 - Retry follows `RetryPolicy { MaxRetries, BaseDelayMs, MaxDelayMs }` (`run start --max-retries`) and applies **only** to `InfraException.Retryable`. The delay is `base * 2^n` with equal jitter (50-100%), derived from a hash of (run, task, repeat, retry) so it is deterministic. A `Retry-After` on 429/503 (carried by `RetryAfterException`, thrown by `ProviderHttp`) is honoured when longer than the backoff. Every delay is capped at `MaxDelayMs`. `Attempt.Retries` counts retries.
-- When retries are exhausted, or the exception is not retryable, the outcome is `InfraError`. Sandbox `InfraException`s during grading are `InfraError` too. An empty or wrong-format answer is `Failed` and is never retried. `InfraError`, `Timeout` and `Cancelled` are excluded from scores.
+- When retries are exhausted, or the exception is not retryable, the outcome is `InfraError`. Sandbox `InfraException`s during grading are `InfraError` too. An empty or wrong-format answer is `Failed` and is never retried. `InfraError`, `Timeout` and `Cancelled` are excluded from the graded pass rate and mean score; `Timeout` counts as a failure in the end-to-end rate (see Metrics).
 - Cancellation:
   - Ctrl+C, the web cancel button, or `run cancel <id>` stops queuing and marks in-flight attempts `Cancelled`. The run becomes `Cancelled`.
   - `run cancel` (and the web button, besides its in-process token) sets `Run.CancelRequested`. The executor polls it every 2 s and cancels its own token, so it works from another process. The flag is cleared when an executor starts.
-- The dashboard offers Resume for Cancelled, Failed and Running runs (`RunHostService.Resume`: `PrepareResume`, then `ExecuteAsync(retryInfra)`); a refusal message is shown on the page. It has no `--allow-config-change` equivalent.
-- Resume (`run resume <id> [--retry-infra] [--allow-config-change]`):
-  - It re-executes missing, `Pending` and `Cancelled` attempts. A run left `Running` by a crashed process resumes the same way. The CLI cannot tell a crashed run from a live one in another process, so do not resume a run that is still executing.
+- Run lease (MB-010): `ExecuteAsync` first takes `Run.LeaseOwner`/`Run.LeaseExpiresMs` with one conditional `UPDATE` (free, or expired), before it touches any attempt. A second executor in any process gets `RunLeaseException` and changes nothing. The cancel poller renews the lease every tick (TTL 30 s, or 3 poll intervals if longer); if renewal finds another owner, the executor stops and does not write the run status. The lease is released when the executor finishes. A crashed executor's lease expires, so its run can be resumed after at most the TTL.
+- The dashboard offers Resume for Cancelled, Failed and Running runs (`RunHostService.Resume`: `PrepareResume`, then `ExecuteAsync(retryInfra)`); a refusal message is shown on the page. A lease refusal is logged and leaves the run's status alone.
+- Resume (`run resume <id> [--retry-infra]`):
+  - It re-executes missing, `Pending` and `Cancelled` attempts. A run left `Running` by a crashed process resumes the same way once its lease has expired. A run that another process is executing is refused (`PrepareResume` checks the lease early for a clear message; the atomic acquisition in `ExecuteAsync` is what guarantees it).
   - With `--retry-infra`, `InfraError` and `Timeout` rows are deleted and redone. The old row's `Retries` is added to the new attempt's `Retries` (the cumulative count of retries across executions).
-  - `RunService.PrepareResume` first checks that the suite exists and that its task hashes and `Suite.ContentHash` still match. It then re-resolves the model by `Run.ModelRef` and compares its snapshot with `Run.ModelSnapshotJson`. A difference is refused with a per-field diff, unless `--allow-config-change` is given; the run label then gets the suffix `[config changed on resume]`. The stored snapshot is kept unchanged.
+  - `RunService.PrepareResume` first checks that the suite exists and that its task hashes and `Suite.ContentHash` still match. It then re-resolves the model by `Run.ModelRef` and compares its snapshot with `Run.ModelSnapshotJson`. A difference is always refused with a per-field diff (MB-005): every attempt of a run shares one model configuration, so a changed configuration needs a new run.
 - The environment fingerprint (`Run.EnvironmentJson`) holds OS, .NET runtime, processor count, app version, a hash of the host name, git SHA and sandbox image ids.
 
 ## Persistence
@@ -146,21 +148,25 @@ Grader type ids (`GraderSpec.Type`) and their `Config`:
 | `compile` | `{ language: "python"\|"csharp", entryPoint }` | `compiles` |
 | `unit-tests` | `{ language, entryPoint, cases: [{ args: [..], expected: json }], tolerance?: number }` | one per case, `case[i]` |
 | `differential` | same shape as unit-tests; cases are seeded random inputs whose expected values come from the host reference solver | one per case, `random[i]` |
-| `performance` | `{ language, entryPoint, args: [..], expected: json, budgetMs: number }`. Runs the case alone with the sandbox `TimeoutMs = budgetMs`. Within-budget means not killed by the **host** wall clock; in-container timings are informational only, because candidate code can forge them | `correct`, `within-budget` |
+| `performance` (GradingPipeline forces Weight 0 / Required false for every performance spec, whatever the stored spec says) | `{ language, entryPoint, args: [..], expected: json, budgetMs: number }`. Runs the case alone with the sandbox `TimeoutMs = budgetMs`. Within-budget means a **correct** output (MB-003), not killed, and **host** wall time within the budget; in-container timings are informational only, because candidate code can forge them. Host wall time depends on load, so the verdict is empirical: `code-generation` emits this grader with weight 0, not required (MB-002), and regrade skips unscored assertions | `correct`, `within-budget` |
 | `ast` | `{ language, rules: [{ kind: "defines"\|"forbids-import"\|"forbids-call"\|"requires-loop"\|"forbids-recursion", name? }] }` | one per rule |
-| `tool-calls` | `{ required: [{ name, args?: json-subset }], ordered?: bool, forbidden?: [name], maxCalls?: int }` | `called[i]:name` per requirement, `order`, `forbidden:name`, `max-calls` |
+| `tool-calls` | `{ required: [{ name, args?: json-subset }], ordered?: bool, forbidden?: [name], maxCalls?: int }`. `called[i]` and `order` credit only **executed** calls (not on the transcript's last message, which the step limit leaves unexecuted, and arguments within 64 KB; the same rule as regrade's replay). `forbidden` and `max-calls` count every **requested** call (MB-008) | `called[i]:name` per requirement, `order`, `forbidden:name`, `max-calls` |
 | `env-state` | `{ expected: json-subset }`, flattened to leaf paths (object keys joined by `.`, array items as `[i]`) and compared by deep equality with the final environment state; `{"path": null}` asserts absence; a null state fails every assertion | one per leaf path |
 | `canary` | `{ canaries: [string], forbiddenTools?: [name] }`. Scans the final text, every assistant message and every tool-call argument (never tool results or user/system messages). Canary and haystack are normalised to lower-case letters and digits only; homoglyphs are not detected | `no-canary:<first 8 chars>…` per canary, `not-called:<tool>` per forbidden tool |
 
 The `unit-tests`, `differential` and `performance` graders send `SandboxRequest(code, entryPoint, inputs)`. They compare the returned outputs with the expected values **on the host**.
 
-`modelbench run regrade <id> [--check]` (`Execution/Regrader.cs`) re-runs the pipeline on every stored Passed/Failed attempt from its stored transcript plus the task's PromptJson/HiddenJson. For tool and agentic attempts the final environment state is rebuilt by replaying the transcript's tool calls into a fresh `family.CreateEnvironment(hidden)`. It compares assertions (grader, name, expected, actual, score, passed), the attempt score and the outcome, reports differences, and never writes. With `--check` it exits non-zero on any difference (AC-01). Code families need the sandbox.
+Every grader compares JSON numbers with `CodeSupport.NumberEqual` (MB-007). With zero tolerance the comparison is exact: integers as `BigInteger`, otherwise `decimal` (so `1`, `1.0` and `1e0` are equal), and `double` only beyond decimal's range. A positive tolerance is an absolute difference in `double`.
+
+`GradingPipeline.Version` names the grading methodology and is stored on every run (`Run.GradingVersion`; runs that predate it are v1). Bump it whenever a change can move an existing attempt's score or outcome. The leaderboard groups by (suite hash, grading version), `compare` refuses runs with different versions, and `regrade` refuses a run graded with another version.
+
+`modelbench run regrade <id> [--check]` (`Execution/Regrader.cs`) re-runs the pipeline on every stored Passed/Failed attempt from its stored transcript plus the task's PromptJson/HiddenJson. For tool and agentic attempts the final environment state is rebuilt by replaying the transcript's tool calls into a fresh `family.CreateEnvironment(hidden)`. It compares assertions (grader, name, expected, actual, score, passed), the attempt score and the outcome, reports differences, and never writes. Unscored assertions (weight 0, not required; the performance grader's) are skipped, because host wall time is not reproducible. With `--check` it exits non-zero on any difference (AC-01). Code families need the sandbox.
 
 ## Sandbox (ADR 0003)
 
 `DockerSandbox` drives the `docker` CLI and talks to the in-container runner over a simple protocol:
 - It pipes the request JSON (code, entryPoint, inputs, action, repetitions, nonce) to the container's **stdin** (`docker run -i`). Nothing is mounted. The runner reads stdin fully before loading candidate code.
-- The runner prints one line, `MBRESULT:<nonce>:<base64 json>`. The nonce is random per execution.
+- The runner prints one line, `MBRESULT:<nonce>:<base64 json>`. The nonce is random per execution. The host requires **exactly one** such line, and case indices `0..n-1` in order; anything else is an unusable (crashed) result, never a pass (MB-004).
 - Images are `modelbench-python:1` and `modelbench-dotnet:1`.
 - Container flags: `--rm --network none --read-only --tmpfs /tmp:rw,size=64m --memory 256m --memory-swap 256m --cpus 1 --pids-limit 64 --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 -e HOME=/tmp -i`.
 - The host enforces a wall-clock limit of `TimeoutMs` + 5 s grace by running `docker kill`, and caps captured output at 1 MB.
@@ -170,14 +176,18 @@ The `unit-tests`, `differential` and `performance` graders send `SandboxRequest(
 Per attempt, summed over the episode's model calls:
 - `input_tokens`, `output_tokens`, `reasoning_tokens`: Measured if the provider reported them, otherwise Unavailable.
 - `ttft_ms`: Measured from the first model call.
-- `duration_ms`: Measured, wall time of the whole episode.
+- `duration_ms`: Measured, inference wall time of the whole attempt: from the first try to the end of the successful episode, including failed tries and back-off (MB-009).
 - `throughput_tps`: Calculated as output tokens / (total − ttft) for the first call, and only when both are measured.
 - `model_calls`: Measured.
+- `duration_ms` of an attempt that replaced a deleted one (resume) covers only the replacement, not the earlier attempt. Per-request telemetry persistence (keeping the usage of failed tries and replaced attempts) is deferred; until then incomplete usage is reported Unavailable.
+- When usage is incomplete (the attempt retried, or it replaced a deleted attempt via resume), the failed requests' usage was never reported, so tokens, `model_calls` and `cost_usd` are Unavailable rather than understated. Coverage (N/M) shows the gap, and cost per success is then not reported.
 - `cost_usd`: Calculated from tokens × `Pricing` (reasoning tokens billed at the `Reasoning` rate if set, else at the output rate). Unavailable when tokens or pricing are missing.
 - `energy_kwh` and `energy_cost_usd`: Estimated from duration × `Energy.Watts` and the price.
 
 Run level:
-- pass rate and mean score, excluding InfraError/Timeout/Cancelled
+- **end-to-end rate**: passes / (graded + timeouts). Timeouts are the model's own budget exhaustion, so they count as failures. This ranks the leaderboard, complete runs (no infra errors or cancellations) first (MB-001); runs with completion below 1 are listed after, marked, and never outrank a complete run
+- **graded pass rate** and mean score, over graded attempts only
+- **completion**: (graded + timeouts) / planned attempts, where planned = mode-matching tasks x repeats (not stored rows). Below 1 means infra errors, cancellations or missing attempts hid part of the run; such a run is not authoritative: it is listed after the ranked runs and marked incomplete
 - **consistency**: the fraction of tasks with the same pass/fail outcome on every repeat
 - cost per successful task: Σcost / passes
 

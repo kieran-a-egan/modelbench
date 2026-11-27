@@ -2,6 +2,38 @@
 
 Manual and live checks backing `docs/acceptance-criteria.md`. Automated evidence is the test suite.
 
+## 2026-11-26: review remediation, issue #1 (MB-001 to MB-010), grading methodology v2
+
+**Environment:** Windows 11, .NET 10, Docker running, sandbox images built. Branch `fix/review-mb-001-010` from `main` 2597e08.
+
+### Automated
+- Baseline before the changes: `dotnet test` **467 passed, 0 failed, 0 skipped**.
+- After: `dotnet build -warnaserror` 0 warnings, 0 errors; `dotnet test` **490 passed, 0 failed, 0 skipped** (Docker-backed tests ran for real).
+
+| Finding | Change | Regression evidence |
+|---|---|---|
+| MB-001 timeouts inflate pass rate | Leaderboard ranks by end-to-end rate, passes / (graded + timeouts); completion and graded pass rate shown separately | `ReportingTests.TimeoutsCountAgainstEndToEndRankingAndInfraErrorsShowAsIncompletion` (1 pass + 9 timeouts now ranks below 9 passes + 1 fail) |
+| MB-002 wall-clock grading not reproducible | `performance` emitted with weight 0, not required; regrade skips unscored assertions; `code-generation` v3 | `RegradeDeterminismTests.HostTimingChangesNeitherTheScoreNorTheRegradeVerdict` (regrade on a host slow enough to miss the budget: 0 differences, same score); `PerformanceBudgetCalibrationTests` (each budget still separates the reference from the quadratic answer) |
+| MB-003 fast wrong code gets performance credit | `within-budget` requires a correct output | `CodeGraderTests.PerformanceTimeoutFailsBothAssertionsAndWrongOutputEarnsNoPerformanceCredit` |
+| MB-004 candidate shares the runner's process | Exactly one frame and in-order case indices required; residual risk documented in the threat model (decision: process-per-case isolation is a follow-up) | `RunnerIntegrityTests` (4 real-container attacks), `CodeGraderTests.MalformedCaseIndicesAreUnusableNeverAPass` |
+| MB-005 resume mixes configurations | `--allow-config-change` removed; a changed configuration is always refused | `ConcurrencyAndResumeTests.ChangedModelConfigurationIsAlwaysRefusedWithADiff`, `RunCliTests.ResumeAndCancelCommands` |
+| MB-006 limited prompt diversity | Capacity is stated in the exhaustion error and documented (decision: seeded spec templates are a follow-up) | `CodeFamilyTests.SuitesUpToCapacityHaveDistinctReproduciblePromptsAndBeyondItFailWithTheCapacity` |
+| MB-007 integer precision | `CodeSupport.NumberEqual` (BigInteger, then decimal) used by every grader | `CodeGraderTests.ExactNumericGrading` (8 cases) |
+| MB-008 unexecuted tool calls earn credit | `called`/`order` credit executed calls only; `forbidden`/`max-calls` count requested ones | `ToolCallsGraderTests.CallsRequestedAtTheStepLimitAreNeverExecutedSoEarnNoCreditButStillCountAsAttempts`, `OversizedArgumentsAreRejectedNotExecuted` |
+| MB-009 retry usage understated | Duration covers all tries; usage Unavailable when incomplete | `ConcurrencyAndResumeTests.RetriedAttemptReportsUsageUnavailableAndCountsTheFailedTryInDuration` |
+| MB-010 no run lease | Atomic DB lease with heartbeat and expiry (migration `RunLeaseAndGradingVersion`) | `ConcurrencyAndResumeTests.ASecondExecutorIsRefusedWhileTheLeaseIsHeldAndNoInferenceIsDuplicated`, `AnExpiredLeaseFromACrashedExecutorCanBeTakenOver` |
+
+`selftest` consequence: the quadratic code-generation answer is no longer a known-bad case at complexity 3 and up, because it is correct and performance is no longer scored.
+
+### Owner review of PR #5 (second round)
+Manual import refuses a version mismatch; `GradingPipeline` forces performance outcomes unscored; grading runs outside the attempt deadline; attempt, redo-deletion and final-status writes are fenced by the lease owner token in the same transaction; `CodeSupport.NumberEqual` compares canonical (sign, coefficient, exponent); completion uses planned attempts and incomplete runs are marked unranked. Per-request telemetry persistence is deferred. Tests: `ConcurrencyAndResumeTests` (version refusal on resume and import, stale owner fenced), `UnscoredPerformanceTests`, `CodeGraderTests.ExactNumericGrading`, `ReportingTests`. After this round: `dotnet build -warnaserror` 0 warnings; `dotnet test` **510 passed, 0 failed** (baseline 492).
+
+### Live model: Strata Desktop `inkling-2-mini-sq-15@low` (scratch database)
+- Suite `e2e` (code-generation c3 ×2 with performance graders, mathematics c2 ×2, tool-calling c3 ×2), hash `cb9fe6909cea`.
+- SingleTurn 4/4 and ToolAssisted 2/2 passed. Leaderboard and `run show` print end-to-end, graded pass rate, completion and `grading v2`.
+- `run regrade --check`: 0 differences on both runs (exit 0).
+- Lease across processes: while `run start --repeats 3` executed in one process, `run resume` from a second process was refused with "is being executed by another process" (exit 1) without changing the run. `run cancel` from a third process stopped it, and a later `run resume` completed all 12 attempts (exit 0).
+
 ## 2026-11-25: full verification (commit after "Performance assertion actual is the verdict")
 
 **Environment:** Windows 11, .NET SDK 10.0.400, Docker 29.6.2, sandbox images `modelbench-python:1` and `modelbench-dotnet:1`.

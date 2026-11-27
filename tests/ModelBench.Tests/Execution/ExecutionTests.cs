@@ -335,6 +335,24 @@ public class ManualExchangeTests
         Assert.Equal(0, again.Graded); // duplicates are reported, not re-graded
     }
 
+    [Fact] public async Task ImportIsRefusedForARunGradedWithAnotherMethodologyAndChangesNothing()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = TestKit.MakeSuite(db, 2);
+        var model = ModelCatalog.Parse(TestKit.ModelsJson("http://127.0.0.1:9/v1")).Resolve("manual/chat-ui");
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.Manual, 1, 60, new RetryPolicy(), null);
+        run.GradingVersion = 1;
+        db.SaveChanges();
+        var task = db.Tasks.First(t => t.SuiteId == suite.Id);
+        File.WriteAllLines(dir.File("r.jsonl"), [JsonUtil.Serialize(new Row(task.Id, 0, "<answer>1</answer>"))]);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => ManualExchange.ImportAsync(db, run.Id, dir.File("r.jsonl"), new UnavailableSandbox(), default));
+        Assert.Contains("would mix them", ex.Message);
+        Assert.Empty(db.Attempts.AsNoTracking().Where(a => a.RunId == run.Id));
+        Assert.Equal(RunStatus.Pending, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status);
+    }
+
     [Fact] public void ExportRejectsNonManualRuns()
     {
         using var dir = new TempDir();

@@ -40,7 +40,8 @@ public static class SuiteGenerator
                     prompt = JsonUtil.Serialize(generated.Prompt);
                     if (fam is DefinitionFamily || seenPrompts.Add(prompt)) break;
                     if (++attempt == 50)
-                        throw new InvalidOperationException($"{fam.Id} complexity {fs.Complexity} cannot produce {fs.Count} distinct tasks");
+                        throw new InvalidOperationException($"{fam.Id} complexity {fs.Complexity} cannot produce {fs.Count} distinct tasks: "
+                            + $"its visible prompts ran out after {i} (the family's capacity at this complexity); lower the count or split it across complexities");
                 }
                 var check = fam.Validate(generated);
                 if (!check.Ok)

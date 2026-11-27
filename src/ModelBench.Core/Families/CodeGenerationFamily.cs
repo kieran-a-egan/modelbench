@@ -15,7 +15,7 @@ namespace ModelBench.Core.Families;
 public sealed class CodeGenerationFamily : IBenchmarkFamily
 {
     public string Id => "code-generation";
-    public int Version => 2; // v2: platform-independent LF line endings
+    public int Version => 3; // v2: platform-independent LF line endings; v3: performance reported, not scored (MB-002)
     public string Category => "code-generation";
     public string Description => "Write a Python or C# function from a specification; graded by compiling, hidden unit tests, seeded differential tests, a performance budget and AST rules.";
     public ExecutionMode Mode => ExecutionMode.SingleTurn;
@@ -53,9 +53,9 @@ public sealed class CodeGenerationFamily : IBenchmarkFamily
             graders.Add(new("performance", "performance", JsonUtil.Element(new
             {
                 language = task.Lang, entryPoint = task.Entry, args = big, expected = task.Solve(Elems(big)), budgetMs = perf.BudgetMs,
-            }), 2));
-            constraints.Append("\nYour solution is also run on a large input under a wall-clock limit of ").Append(perf.BudgetMs / 1000.0)
-                .Append(" seconds including interpreter start-up, so use an efficient algorithm.");
+            }), Weight: 0, Required: false)); // MB-002: wall time is not reproducible, so it is reported, never scored
+            constraints.Append("\nYour solution is also timed on a large input against a wall-clock target of ").Append(perf.BudgetMs / 1000.0)
+                .Append(" seconds including interpreter start-up (reported, not scored), so use an efficient algorithm.");
         }
         if (c >= 4 && task.Forbid is { } forbid)
         {
@@ -86,7 +86,8 @@ public sealed class CodeGenerationFamily : IBenchmarkFamily
             Answer(task.Lang, Broken(task.Ref)),
             Turn("I would solve this with a single pass and a hash map, but I won't write the code."),
         };
-        if (c >= 3 && task.Perf is { } p) bad.Add(Answer(task.Lang, p.Quadratic));
+        // The quadratic answer is correct, so it passes now that performance is reported, not scored (MB-002).
+        // CodeFamilyTests checks it is still reported over budget, which keeps each budget calibrated.
 
         return new GeneratedTask(new TaskPrompt(null, user.ToString(), AnswerFormat.CodeBlock, []),
             new TaskHidden(graders, null, JsonUtil.Element(new { task = task.Id, examples = task.Examples })),

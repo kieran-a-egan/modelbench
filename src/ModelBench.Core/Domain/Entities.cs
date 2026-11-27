@@ -57,6 +57,12 @@ public class Run
     public RunStatus Status { get; set; }
     /// <summary>Set by 'run cancel' (or the web button); the executing process polls it and stops.</summary>
     public bool CancelRequested { get; set; }
+    /// <summary>Grading methodology the run was scored with (GradingPipeline.Version). Runs with different versions are never ranked or compared together.</summary>
+    public int GradingVersion { get; set; } = Grading.GradingPipeline.Version;
+    /// <summary>Executor holding the run (MB-010). Acquired atomically, renewed while executing, released when done.</summary>
+    public Guid? LeaseOwner { get; set; }
+    /// <summary>Lease expiry, unix ms (a long because EF SQLite cannot compare DateTimeOffset in queries).</summary>
+    public long? LeaseExpiresMs { get; set; }
     public string? Label { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? CompletedAt { get; set; }

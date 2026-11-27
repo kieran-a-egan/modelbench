@@ -13,7 +13,7 @@ Candidate-generated code is untrusted. It must run with no network, no secrets, 
 - The runner inside the container does all compiling, executing and AST parsing:
   - Python: `ast` + `importlib`.
   - C#: Roslyn in-memory compilation + reflection invoke.
-- Results come back on stdout as `MBRESULT:<nonce>:<base64 json>`. The nonce is random per request, and the host takes the last matching line.
+- Results come back on stdout as `MBRESULT:<nonce>:<base64 json>`. The nonce is random per request, and the host requires exactly one matching line (a second one means candidate code wrote a frame, so the result is unusable).
 - The host enforces `TimeoutMs + 5s` by running `docker kill <name>`, and caps stdout/stderr capture at 1 MB.
 - Docker unavailable or image missing raises `InfraException`. Candidate crash, timeout or OOM is a model failure.
 
