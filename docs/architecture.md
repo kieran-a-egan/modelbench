@@ -76,7 +76,7 @@ Rules:
 
 - `SuiteSpec { Name, MasterSeed, Families: [{ Family, Complexity, Count }] }`. Generator versions are recorded per entry at generation time.
 - Each task's seed is `Rng.DeriveSeed(masterSeed, familyId, familyVersion, index)`. The family gets `new Rng(seed)`.
-- Procedural prompts are distinct within a suite. If a prompt repeats, the seed is re-derived with familyId `"<id>#<attempt>"` (attempt 1..49), so the result is still deterministic and `verify` reproduces it. File-defined families repeat tasks by design.
+- Procedural prompts are distinct within a suite. If a prompt repeats, the seed is re-derived with familyId `"<id>#<attempt>"` (attempt 1..999, then generation fails), so the result is still deterministic and `verify` reproduces it. File-defined families repeat tasks by design.
 - Each procedural family has a finite visible-prompt capacity per complexity, and a suite never repeats a prompt silently (MB-006). A family whose capacity is a small fixed number declares it (`IBenchmarkFamily.Capacity`), and `SuiteGenerator` refuses a larger count up front with that number. For other families, prompt collisions are retried with up to 1000 deterministic seed salts before failing with `ran out after N (the family's capacity at this complexity)`, or because an earlier entry of the same family used them. Dedup is suite-wide while the up-front check is per entry, so complexities that share prompts share capacity (see the table).
 - `code-generation` (v4, #4) draws from 22 task variants. Each variant is its own visible specification (for example kth smallest, kth largest or kth smallest distinct; intervals that touch merged or kept apart), with its own reference solver, an algorithmically different checker for `Validate`, and a reference answer, a wrong answer and, for the performance tasks, a quadratic answer. Examples are fixed per variant and only the hidden inputs are random, so each variant gives one prompt per complexity:
 
@@ -179,7 +179,7 @@ Every grader compares JSON numbers with `CodeSupport.NumberEqual` (MB-007). With
 - The runner prints one line, `MBRESULT:<nonce>:<base64 json>`. The nonce is random per execution. The host requires **exactly one** such line, a container exit code of 0, and case indices `0..n-1` in order; anything else is an unusable (crashed) result, never a pass (MB-004).
 - Images are `modelbench-python:3` and `modelbench-dotnet:3`. The tag changes whenever the runner protocol does, so a stale image fails as missing rather than running an old runner.
 - Container flags: `--rm --network none --read-only --tmpfs /tmp:rw,size=64m --memory 256m --memory-swap 256m --cpus 1 --pids-limit 64 --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 -e HOME=/tmp -i`.
-- The runner kills a case at `TimeoutMs` x repetitions (that case alone errors); the host enforces a backstop wall-clock limit of `TimeoutMs` x repetitions x inputs + 5 s grace by running `docker kill`, and caps captured output at 1 MB.
+- The runner kills a case at `TimeoutMs` x repetitions (that case alone errors); the host enforces a backstop wall-clock limit of `TimeoutMs` x repetitions x inputs + a grace of 5 s + 100 ms per call (start-up and per-case process overhead) by running `docker kill`, and caps captured output at 1 MB.
 
 ## Metrics (ADR 0008)
 
@@ -203,6 +203,6 @@ Run level:
 
 ## Configuration
 
-- **Models**: `models.json`, a superset of pi's `~/.pi/agent/models.json`. The CLI looks for `--models <path>`, then `./models.json`, then `~/.modelbench/models.json`. See `models.example.json` and the user guide.
+- **Models**: `models.json`, a superset of pi's `~/.pi/agent/models.json`. The CLI looks for `--models <path>`, then the `MODELBENCH_MODELS` env var, then `./models.json`, then `~/.modelbench/models.json`. See `models.example.json` and the user guide.
 - **Database**: the `--db <path>` option, else the `MODELBENCH_DB` env var, else `~/.modelbench/modelbench.db`.
 - **Secrets**: `apiKey: "{env:NAME}"` is resolved at request time.

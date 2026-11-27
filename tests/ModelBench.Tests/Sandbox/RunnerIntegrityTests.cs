@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ModelBench.Core.Domain;
 using ModelBench.Core.Grading;
 using ModelBench.Core.Sandbox;
@@ -179,6 +180,8 @@ public class RunnerIntegrityTests
         Assert.Equal("4", Out(r, 4));
     }
 
+    // Signals sent to PID 1 from inside the container are dropped unless PID 1 has a handler, so the kill alone proves little
+    // for Python (the survival check passes even without the ignore code). The meaningful assertion is the runner's own signal disposition.
     [Fact] public async Task PythonCaseCannotSignalTheRunner()
     {
         var r = await Py("""
@@ -186,13 +189,19 @@ public class RunnerIntegrityTests
             def f(x):
                 if x == 0:
                     os.kill(1, signal.SIGINT); os.kill(1, signal.SIGTERM)
+                if x == 2:
+                    return int([l for l in open('/proc/1/status') if l.startswith('SigIgn')][0].split()[1], 16)
                 return x
-            """, "f", 10_000, "[0]", "[1]");
+            """, "f", 10_000, "[0]", "[1]", "[2]");
         Assert.Equal(0, r.ExitCode);
         Assert.Equal("0", Out(r, 0));
         Assert.Equal("1", Out(r, 1));
+        const int sigIntAndTerm = (1 << (2 - 1)) | (1 << (15 - 1));
+        Assert.Equal(sigIntAndTerm, int.Parse(Out(r, 2)) & sigIntAndTerm); // PID 1 ignores SIGINT and SIGTERM
     }
 
+    // Unlike Python, the .NET runtime installs its own handlers for SIGINT/SIGTERM, so /proc/1/status SigCgt/SigIgn is identical with and without
+    // the PosixSignalRegistration. The kill itself is meaningful here: without the registration the runner exits 130 (checked with a throwaway image).
     [Fact] public async Task CSharpCaseCannotSignalTheRunner()
     {
         var r = await Cs("""
@@ -204,6 +213,39 @@ public class RunnerIntegrityTests
         Assert.Equal(0, r.ExitCode);
         Assert.Equal("0", Out(r, 0));
         Assert.Equal("1", Out(r, 1));
+    }
+
+    [Fact] public async Task RepetitionsMultiplyThePerCaseDeadline()
+    {
+        // 3 x 0.7 s of work exceeds the 1 s per-call timeout but not the 3 s case deadline; a hang fails alone at the full 3 s
+        var r = await Run(SandboxLanguage.Python, """
+            import time
+            def f(x):
+                while x:
+                    pass
+                time.sleep(0.7)
+                return x
+            """, "f", 1000, SandboxAction.Run, 3, "[0]", "[1]");
+        Assert.False(r.TimedOut);
+        Assert.Equal("0", Out(r, 0));
+        Assert.Equal("case timed out after 3000 ms", r.Cases[1].Error);
+    }
+
+    [Fact] public async Task EveryCSharpCaseHangingFailsPerCaseNotTheWholeRequest()
+    {
+        var r = await Cs("public static class S { public static int F(int x) { while (true) { } } }", "S.F", 1000, "[1]", "[2]", "[3]", "[4]", "[5]", "[6]");
+        Assert.False(r.TimedOut);
+        Assert.Equal(6, r.Cases.Count);
+        Assert.All(r.Cases, c => Assert.Equal("case timed out after 1000 ms", c.Error));
+    }
+
+    [Fact] public void RunnerOutputBudgetsFitUnderTheHostOutputCap()
+    {
+        var root = Path.GetDirectoryName(SandboxImages.FindSandboxDir())!;
+        var py = int.Parse(Regex.Match(File.ReadAllText(Path.Combine(root, "sandbox", "python", "runner.py")), @"^OUTPUT_BUDGET = ([\d_]+)", RegexOptions.Multiline).Groups[1].Value.Replace("_", ""));
+        var cs = int.Parse(Regex.Match(File.ReadAllText(Path.Combine(root, "sandbox", "dotnet", "Runner", "Program.cs")), @"const int OutputBudget = ([\d_]+);").Groups[1].Value.Replace("_", ""));
+        Assert.Equal(py, cs);
+        Assert.True(DockerSandbox.FrameBytes(py) < DockerSandbox.OutputCap, "the base64 frame for a full budget must fit under the host's output cap");
     }
 
     [Fact] public async Task AnOversizedOutputFailsAloneAndTheFrameStillFits()

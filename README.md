@@ -35,7 +35,7 @@ modelbench sandbox build
 #    or point MODELBENCH_MODELS at a pi models file (set it once, e.g. setx MODELBENCH_MODELS %USERPROFILE%\.pi\agent\models.json)
 cp models.example.json ~/.modelbench/models.json
 
-# 3. Generate a suite: 3 tasks of every family at every complexity
+# 3. Generate a suite: 3 tasks of mathematics at every complexity, and 3 debugging tasks at complexity 2
 modelbench suite generate --name first --seed 1 --family mathematics:all:3 --family debugging:2:3
 
 # 4. Run it
@@ -93,5 +93,5 @@ Add your own with a JSON file in `benchmarks/static` or `benchmarks/repos`; see 
 | `src/ModelBench.Web` | The Blazor Server dashboard |
 | `sandbox/` | Dockerfiles and runners for the code sandbox |
 | `benchmarks/` | File-defined benchmarks |
-| `tests/ModelBench.Tests` | xUnit v3 tests; `dotnet test` runs them (three live-provider smoke tests skip unless enabled) |
+| `tests/ModelBench.Tests` | xUnit v3 tests; `dotnet test` runs them |
 | `docs/` | Architecture, ADRs, threat model, acceptance criteria, user guide |

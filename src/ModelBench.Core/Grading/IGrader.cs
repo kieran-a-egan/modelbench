@@ -46,6 +46,6 @@ public interface IGrader
 public class InfraException(string message, bool retryable = true, Exception? inner = null, TimeSpan? retryAfter = null) : Exception(message, inner)
 {
     public bool Retryable { get; } = retryable;
-    /// <summary>Server-requested delay (HTTP Retry-After), honoured by the runner up to RetryPolicy.MaxDelayMs.</summary>
+    /// <summary>Server-requested delay (HTTP Retry-After), honoured by the runner even above RetryPolicy.MaxDelayMs, up to 10 minutes (see RetryPolicy).</summary>
     public TimeSpan? RetryAfter { get; } = retryAfter;
 }

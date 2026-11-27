@@ -9,8 +9,15 @@ internal static class SandboxEnv
 {
     private static readonly Lazy<Task<string?>> Ready = new(async () =>
     {
-        try { await SandboxImages.BuildAsync(SandboxImages.FindSandboxDir(), _ => { }); return null; }
+        // Skip only when docker itself is unavailable; a failed image build must fail the tests, so it propagates.
+        try
+        {
+            var (code, _, stderr) = await SandboxImages.RunDockerAsync(["version", "--format", "{{.Server.Version}}"], CancellationToken.None);
+            if (code != 0) return stderr;
+        }
         catch (InfraException e) { return e.Message; }
+        await SandboxImages.BuildAsync(SandboxImages.FindSandboxDir(), _ => { });
+        return null;
     });
 
     public static readonly DockerSandbox Sandbox = new();

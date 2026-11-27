@@ -7,7 +7,7 @@ MAX_ERR = 500
 # "output budget exceeded" errors. Keep in step with DockerSandbox.OutputCap and the C# runner.
 OUTPUT_BUDGET = 740_000
 # The runner hard-exits this long after the last case could legitimately finish, so a dead host cannot leave the container running.
-SELF_DEADLINE_SLACK_MS = 30_000  # well past the host's +5 s kill, so the host always fires first; this only reaps containers of a dead host
+SELF_DEADLINE_SLACK_MS = 30_000  # well past the host's kill (5 s + 100 ms per call of grace), so the host always fires first; this only reaps containers of a dead host
 
 
 class Capped(io.StringIO):

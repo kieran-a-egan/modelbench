@@ -448,8 +448,11 @@ public class ConcurrencyAndResumeTests
         var suite = TestKit.MakeSuite(db, 6);
         var model = TestKit.Model(server.BaseUrl);
         var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null);
-        var exec = Exec(model, TimeSpan.FromMilliseconds(50)).ExecuteAsync(db, run.Id, default);
-        await Task.Delay(700);
+        var executor = Exec(model, TimeSpan.FromMilliseconds(50));
+        var first = new TaskCompletionSource();
+        executor.AttemptCompleted += _ => first.TrySetResult();
+        var exec = executor.ExecuteAsync(db, run.Id, default);
+        await first.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken); // cancel once the first attempt is stored, however slow the machine
         using (var other = dir.OpenDb()) RunService.RequestCancel(other, run.Id);
         await exec;
         var after = db.Runs.AsNoTracking().Single(r => r.Id == run.Id);
