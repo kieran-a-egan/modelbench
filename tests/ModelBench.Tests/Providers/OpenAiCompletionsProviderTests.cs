@@ -163,12 +163,19 @@ public class OpenAiCompletionsProviderTests
 
     private static readonly string UsageOnly = FakeReply.UsageChunk(1, 2, null);
 
-    [Fact] public async Task MissingFinishReasonWithContentIsStillAResponse()
+    [Fact] public async Task MissingFinishReasonWithContentAndDoneIsStillAResponse()
     {
-        await using var server = await FakeServer.StartAsync((_, _) => new FakeReply(200, [FakeReply.Delta(new JsonObject { ["content"] = "hi" })]), sendDone: false);
+        await using var server = await FakeServer.StartAsync((_, _) => new FakeReply(200, [FakeReply.Delta(new JsonObject { ["content"] = "hi" })]));
         var r = await Run(server);
         Assert.Equal("hi", r.Text);
         Assert.Null(r.FinishReason);
+    }
+
+    [Fact] public async Task ContentCutOffWithoutFinishReasonOrDoneIsRetryableInfra()
+    {
+        await using var server = await FakeServer.StartAsync((_, _) => new FakeReply(200, [FakeReply.Delta(new JsonObject { ["content"] = "partial ans" })]), sendDone: false);
+        var ex = await Assert.ThrowsAsync<InfraException>(() => Run(server));
+        Assert.True(ex.Retryable);
     }
 
     [Fact] public async Task NonSseCompletionBodyIsParsed()

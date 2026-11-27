@@ -30,6 +30,7 @@ public sealed class OpenAiCompletionsProvider(ResolvedModel model, HttpClient? h
         TimeSpan? ttft = null;
         long? input = null, output = null, reasoningTokens = null;
         var sawContent = false;
+        var sawDone = false;
 
         var sawData = false;
         var ignored = new List<string>();
@@ -82,7 +83,7 @@ public sealed class OpenAiCompletionsProvider(ResolvedModel model, HttpClient? h
         await foreach (var data in SseReader.ReadDataAsync(stream, ct, ignored))
         {
             raw.AppendLine(data);
-            if (data.Trim() == "[DONE]") break;
+            if (data.Trim() == "[DONE]") { sawDone = true; break; }
             sawData = true;
             Handle(data);
         }
@@ -91,8 +92,9 @@ public sealed class OpenAiCompletionsProvider(ResolvedModel model, HttpClient? h
             raw.AppendLine(body);
             Handle(body);
         }
-        // Some local servers omit finish_reason but still send content; only an empty, unfinished stream is a failure.
-        if (finish is null && !sawContent)
+        // Some local servers omit finish_reason but still send content and [DONE]. A stream with neither finish_reason nor [DONE]
+        // was cut off (server OOM, disconnect), as is one with no content at all; a complete non-SSE JSON body needs no [DONE].
+        if (finish is null && (!sawContent || (sawData && !sawDone)))
             throw new InfraException("stream ended without a completion", retryable: true);
 
         var toolCalls = calls.Values.Select(c => new ToolCall(c.Id, c.Name, c.Args.ToString())).ToList();
