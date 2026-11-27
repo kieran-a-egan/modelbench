@@ -14,6 +14,7 @@ public static partial class AnswerExtractor
     [GeneratedRegex(@"<(think|thinking)>.*$", Opts)] private static partial Regex UnclosedOpen();
     [GeneratedRegex(@"<answer>(.*?)</answer>", Opts)] private static partial Regex Tagged();
     [GeneratedRegex(@"```[^\r\n]*\r?\n(.*?)```", Opts)] private static partial Regex Fenced();
+    [GeneratedRegex(@"^```(?:[A-Za-z]*\r?\n)?(.*?)\s*```$", Opts)] private static partial Regex WholeFence();
 
     /// <summary>Removes closed think blocks, text before a stray closing tag (template-opened thinking) and an unterminated block.</summary>
     public static string StripReasoning(string text)
@@ -32,7 +33,7 @@ public static partial class AnswerExtractor
         {
             AnswerFormat.Tagged => Last(Tagged(), text),
             AnswerFormat.CodeBlock => Last(Fenced(), text),
-            AnswerFormat.Json => ParsesAsJson(Last(Tagged(), text) ?? Last(Fenced(), text)),
+            AnswerFormat.Json => ParsesAsJson(Unfence(Last(Tagged(), text)) ?? Last(Fenced(), text)), // the prompt allows fences inside the tags
             _ => text.Trim(),
         };
     }
@@ -44,6 +45,8 @@ public static partial class AnswerExtractor
         var v = last?.Groups[1].Value.Trim();
         return string.IsNullOrEmpty(v) ? null : v;
     }
+
+    private static string? Unfence(string? body) => body is not null && WholeFence().Match(body) is { Success: true } m ? m.Groups[1].Value.Trim() : body;
 
     private static string? ParsesAsJson(string? candidate)
     {

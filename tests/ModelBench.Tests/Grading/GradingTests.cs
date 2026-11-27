@@ -37,6 +37,24 @@ public class AnswerExtractorTests
         Assert.Null(AnswerExtractor.Extract("<answer>{oops</answer>", AnswerFormat.Json));
     }
 
+    [Theory]
+    [InlineData("<answer>```json\n[1,2]\n```</answer>")]
+    [InlineData("<answer>\n```\n[1,2]\n```\n</answer>")]
+    [InlineData("<answer>```[1,2]```</answer>")]
+    public void JsonFencedInsideTagsParses(string text)
+        => Assert.Equal("[1,2]", AnswerExtractor.Extract(text, AnswerFormat.Json));
+
+    [Fact] public void JsonWithBackticksInsideAStringIsUnchanged()
+        => Assert.Equal("""{"s":"```x```"}""", AnswerExtractor.Extract("""<answer>{"s":"```x```"}</answer>""", AnswerFormat.Json));
+
+    [Theory]
+    [InlineData("1e99999999999")]
+    [InlineData("١٢٣")]
+    [InlineData("٣/٤")]
+    [InlineData("1e-99999999999")]
+    public void RationalNeverThrowsOnModelText(string text)
+        => Assert.False(ModelBench.Core.Families.Rational.TryParse(text, out _));
+
     [Fact] public void FreeTextIsTrimmed()
     {
         Assert.Equal("hello", AnswerExtractor.Extract("  hello \n", AnswerFormat.FreeText));

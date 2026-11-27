@@ -235,11 +235,12 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
                     await Task.Delay(policy.Delay(attempt.Retries++, run.Id, task.Id, repeat, (ex as InfraException)?.RetryAfter), cts.Token);
                 }
             }
-            var graded = await GradingPipeline.GradeAsync(prompt, hidden, episode.Transcript, episode.FinalEnvironmentState, sandbox, ct); // not cts: the deadline bounds inference only, so slow optional grading cannot Timeout a correct answer
-            graded.ApplyTo(attempt);
+            // Saved before grading, so a grader failure still keeps the paid-for transcript.
             attempt.TranscriptJson = JsonUtil.Serialize(episode.Transcript);
             attempt.RawRequestsJson = JsonUtil.Serialize(episode.Responses.Select(r => r.RawRequest));
             attempt.RawResponsesJson = JsonUtil.Serialize(episode.Responses.Select(r => r.RawResponse));
+            var graded = await GradingPipeline.GradeAsync(prompt, hidden, episode.Transcript, episode.FinalEnvironmentState, sandbox, ct); // not cts: the deadline bounds inference only, so slow optional grading cannot Timeout a correct answer
+            graded.ApplyTo(attempt);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -254,6 +255,16 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         {
             attempt.Outcome = AttemptOutcome.InfraError;
             attempt.ErrorMessage = ex.Message;
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            attempt.Outcome = AttemptOutcome.Cancelled; // e.g. the sandbox process killed by the cancel surfaces as an IOException
+        }
+        catch (Exception ex)
+        {
+            // A grader or provider-parse bug fails this attempt only; it must not abort the run.
+            attempt.Outcome = AttemptOutcome.InfraError;
+            attempt.ErrorMessage = $"{ex.GetType().Name}: {ex.Message}";
         }
         attempt.CompletedAt = DateTimeOffset.UtcNow;
         // A failed try, or a replaced earlier attempt, consumed usage nobody recorded: report usage Unavailable, never a partial sum.

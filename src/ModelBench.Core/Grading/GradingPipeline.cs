@@ -22,8 +22,9 @@ public static class GradingPipeline
     /// <summary>
     /// Bump whenever a change can move an existing attempt's Score or Passed. Stored on Run.GradingVersion.
     /// 1: original. 2: end-to-end ranking, exact numbers, executed-only tool credit, performance gated on correctness and unscored (issue #1).
+    /// 3: fenced JSON inside answer tags parses; canary scan ignores inline reasoning (issue #7).
     /// </summary>
-    public const int Version = 2;
+    public const int Version = 3;
 
     public static async Task<GradingResult> GradeAsync(
         TaskPrompt prompt, TaskHidden hidden, IReadOnlyList<ChatMessage> transcript,

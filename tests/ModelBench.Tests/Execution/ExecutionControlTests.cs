@@ -357,6 +357,27 @@ public class ConcurrencyAndResumeTests
                 : throw new InfraException("boom", retryable: false);
     }
 
+    private sealed class ThrowingProvider : IModelProvider
+    {
+        public Task<ModelResponse> CompleteAsync(ModelRequest request, CancellationToken ct) => throw new FormatException("bad usage field");
+    }
+
+    [Fact] public async Task UnexpectedExceptionFailsOnlyThatAttemptAsNonRetryableInfraError()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = SuiteGenerator.Generate(new SuiteSpec("x", 5, [new FamilySpec("mathematics", 2, 1)]));
+        SuiteGenerator.Persist(db, suite);
+        var model = TestKit.Model("http://127.0.0.1:9/v1");
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(3, 1, 5), null);
+        await new RunExecutor(new ThrowingProvider(), model, new UnavailableSandbox()).ExecuteAsync(db, run.Id, default);
+
+        Assert.Equal(RunStatus.Completed, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status);
+        var attempts = db.Attempts.AsNoTracking().Where(x => x.RunId == run.Id).ToList();
+        Assert.NotEmpty(attempts);
+        Assert.All(attempts, a => { Assert.Equal((AttemptOutcome.InfraError, 0), (a.Outcome, a.Retries)); Assert.Equal("FormatException: bad usage field", a.ErrorMessage); });
+    }
+
     [Fact] public async Task MultiCallEpisodeThatFailsBeforeReturningReportsUsageUnavailableNotMeasuredZero()
     {
         // PR #5 review: the first request of a tool loop succeeded, the second failed (no retries): no episode, but a call was made.
