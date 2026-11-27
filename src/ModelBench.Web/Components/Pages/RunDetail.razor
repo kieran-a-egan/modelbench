@@ -1,6 +1,7 @@
 @page "/runs/{Id:guid}"
 @using Microsoft.EntityFrameworkCore
 @inject Func<BenchDb> Open
+@inject RunHostService Host
 
 <PageTitle>Run</PageTitle>
 @if (summary is null)
@@ -16,7 +17,7 @@ else
     </p>
 
     <RunProgress RunId="Id" @rendermode="InteractiveServer" />
-    @if (summary.Status is RunStatus.Cancelled or RunStatus.Failed or RunStatus.Running)
+    @if (summary.Status is RunStatus.Cancelled or RunStatus.Failed or RunStatus.Running || (summary.Status is RunStatus.Pending && !Host.IsTracked(Id)))
     {
         <ResumeRun RunId="Id" @rendermode="InteractiveServer" />
     }

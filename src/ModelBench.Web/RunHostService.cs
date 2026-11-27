@@ -22,6 +22,9 @@ public sealed class RunHostService(Func<BenchDb> openDb, ILogger<RunHostService>
         _queue.Writer.TryWrite(runId);
     }
 
+    /// <summary>True while this process has the run queued or executing.</summary>
+    public bool IsTracked(Guid runId) => _pending.ContainsKey(runId);
+
     /// <summary>Validates and queues a resume (see RunService.PrepareResume). Throws InvalidOperationException with the reason when refused.</summary>
     public void Resume(Guid runId, ModelCatalog catalog, bool retryInfra)
     {

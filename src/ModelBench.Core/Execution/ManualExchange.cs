@@ -60,7 +60,7 @@ public static class ManualExchange
             if (string.IsNullOrWhiteSpace(line)) continue;
             ResponseLine? rl;
             try { rl = JsonUtil.Deserialize<ResponseLine>(line); }
-            catch (System.Text.Json.JsonException ex) { errors.Add($"line {lineNo}: {ex.Message}"); continue; }
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException) { errors.Add($"line {lineNo}: {ex.Message}"); continue; }
             if (!tasks.TryGetValue(rl.TaskId, out var task)) { errors.Add($"line {lineNo}: task {rl.TaskId} is not in this run's suite"); continue; }
             if (rl.Repeat < 0 || rl.Repeat >= run.Repeats) { errors.Add($"line {lineNo}: repeat {rl.Repeat} outside 0..{run.Repeats - 1}"); continue; }
             if (!existing.Add((task.Id, rl.Repeat))) { errors.Add($"line {lineNo}: task {task.Id} repeat {rl.Repeat} already has a response"); continue; }

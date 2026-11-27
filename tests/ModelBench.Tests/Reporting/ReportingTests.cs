@@ -67,6 +67,20 @@ public class ReportingTests
         Assert.Equal([false, false], rows.Skip(1).Select(r => r.Authoritative).ToArray()); // listed, after the ranked run
     }
 
+    [Fact] public void DefaultLeaderboardKeepsTheLatestAuthoritativeRunOverANewerIncompleteOne()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = ReportSeed.AddSuite(db);
+        var complete = ReportSeed.AddRun(db, suite, "m/a", ST, ReportSeed.T0, Seq(Passed, Failed, Passed, Failed));
+        var incomplete = ReportSeed.AddRun(db, suite, "m/a", ST, ReportSeed.T0.AddDays(1), Seq(Passed, InfraError, InfraError, InfraError));
+        Assert.True(Reports.Summarize(db, complete.Id).Authoritative);
+        Assert.False(Reports.Summarize(db, incomplete.Id).Authoritative);
+
+        Assert.Equal(complete.Id, Reports.Leaderboard(db, ST).Single().Rows.Single().RunId);
+        Assert.Equal(2, Reports.Leaderboard(db, ST, allRuns: true).Single().Rows.Count);
+    }
+
     [Fact] public void RunsGradedWithDifferentMethodologiesAreNeverRankedOrComparedTogether()
     {
         using var dir = new TempDir();

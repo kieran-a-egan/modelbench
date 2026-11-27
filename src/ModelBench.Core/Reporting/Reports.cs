@@ -121,7 +121,8 @@ public static class Reports
     {
         var runs = db.Runs.AsNoTracking().Include(r => r.Suite).Where(r => r.Mode == mode && r.Status == RunStatus.Completed).ToList()
             .Where(r => hash is null || r.Suite!.ContentHash == hash).ToList();
-        if (!allRuns) runs = runs.GroupBy(r => (r.ModelRef, r.Suite!.ContentHash, r.GradingVersion)).Select(g => g.OrderByDescending(r => r.CreatedAt).First()).ToList();
+        if (!allRuns) runs = runs.GroupBy(r => (r.ModelRef, r.Suite!.ContentHash, r.GradingVersion))
+            .Select(g => g.OrderByDescending(r => Summarize(db, r.Id).Authoritative).ThenByDescending(r => r.CreatedAt).First()).ToList();
         // Comparable only within one suite hash AND one grading methodology.
         return runs.GroupBy(r => (r.Suite!.ContentHash, r.GradingVersion))
             .Select(g => new LeaderboardGroup(g.First().Suite!.Name, g.Key.ContentHash, g.Select(r => Summarize(db, r.Id))
