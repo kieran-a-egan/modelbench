@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Numerics;
 using System.Text.RegularExpressions;
 
@@ -33,7 +34,7 @@ public readonly partial record struct Rational
     /// <summary>Canonical text: "p/q" in lowest terms, or just "p" when the denominator is 1.</summary>
     public override string ToString() => Den.IsOne ? Num.ToString() : $"{Num}/{Den}";
 
-    [GeneratedRegex(@"^([+-]?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$")]
+    [GeneratedRegex(@"^([+-]?)([0-9]+)(?:\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?$")]
     private static partial Regex DecimalPattern();
 
     /// <summary>Accepts "p/q", integers and decimals ("-12.5", "1e-5"). Anything else fails.</summary>
@@ -52,11 +53,13 @@ public readonly partial record struct Rational
         var m = DecimalPattern().Match(text);
         if (!m.Success) return false;
         var frac = m.Groups[3].Value;
-        var num = BigInteger.Parse(m.Groups[2].Value + frac);
+        var num = BigInteger.Parse(m.Groups[2].Value + frac, CultureInfo.InvariantCulture);
         if (m.Groups[1].Value == "-") num = -num;
-        var scale = -frac.Length + (m.Groups[4].Success ? int.Parse(m.Groups[4].Value) : 0);
+        var exp = 0;
+        if (m.Groups[4].Success && !int.TryParse(m.Groups[4].Value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out exp)) return false;
+        var scale = -(long)frac.Length + exp;
         if (Math.Abs(scale) > 1000) return false;
-        value = scale >= 0 ? Of(num * BigInteger.Pow(10, scale)) : Of(num, BigInteger.Pow(10, -scale));
+        value = scale >= 0 ? Of(num * BigInteger.Pow(10, (int)scale)) : Of(num, BigInteger.Pow(10, (int)-scale));
         return true;
     }
 
@@ -64,6 +67,6 @@ public readonly partial record struct Rational
     {
         v = default;
         s = s.Trim();
-        return s.Length > 0 && s.All(c => char.IsAsciiDigit(c) || c is '+' or '-') && BigInteger.TryParse(s, out v);
+        return s.Length > 0 && s.All(c => char.IsAsciiDigit(c) || c is '+' or '-') && BigInteger.TryParse(s, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out v);
     }
 }
