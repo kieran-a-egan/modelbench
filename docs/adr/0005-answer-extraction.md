@@ -8,6 +8,7 @@ Without an LLM judge, answers must be located in free-form model output mechanic
 ## Decision
 - Every prompt states the required answer format: `<answer>…</answer>`, a fenced code block, JSON, or free text.
 - `AnswerExtractor` first removes `<think>`/`<thinking>` blocks, then takes the **last** match.
+- For JSON, one code fence wrapped around the tagged body is removed before parsing (prompts allow fences inside the tags).
 - If no match is found, the required `answer-format` assertion fails.
 - Normalisation is explicit and per-grader (`normalize`, `absTol`/`relTol`, `unorderedArrays`). The extractor never applies it implicitly.
 

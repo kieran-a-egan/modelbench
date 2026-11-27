@@ -14,7 +14,7 @@ public static partial class AnswerExtractor
     [GeneratedRegex(@"<(think|thinking)>.*$", Opts)] private static partial Regex UnclosedOpen();
     [GeneratedRegex(@"<answer>(.*?)</answer>", Opts)] private static partial Regex Tagged();
     [GeneratedRegex(@"```[^\r\n]*\r?\n(.*?)```", Opts)] private static partial Regex Fenced();
-    [GeneratedRegex(@"^```[^\r\n]*\r?\n(.*?)\s*```$", Opts)] private static partial Regex WholeFence();
+    [GeneratedRegex(@"^```(?:[A-Za-z]*\r?\n)?(.*?)\s*```$", Opts)] private static partial Regex WholeFence();
 
     /// <summary>Removes closed think blocks, text before a stray closing tag (template-opened thinking) and an unterminated block.</summary>
     public static string StripReasoning(string text)
