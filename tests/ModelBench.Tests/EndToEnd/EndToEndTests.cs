@@ -150,6 +150,45 @@ public class EndToEndTests
         Assert.Throws<ArgumentException>(() => Parse("nope:1"));
     }
 
+    [Fact] public void StaticFamiliesGetOneEntryAndMalformedSpecsAreRejected()
+    {
+        foreach (var id in ModelBench.Core.Families.FamilyRegistry.All.Select(f => f.Id).Where(i => i.StartsWith("static:") || i.StartsWith("repo:")))
+            Assert.Single(Parse(id));
+        Assert.Throws<ArgumentException>(() => Parse("mathematics::3"));
+        Assert.Throws<ArgumentException>(() => Parse("mathematics:"));
+    }
+
+    [Fact] public async Task CliErrorsAreReportedForBadModelsFilesEnergyExportPathsAndRefusedRuns()
+    {
+        using var dir = new TempDir();
+        File.WriteAllText(dir.File("bad.json"), "{ not json");
+        var (code, output) = await Cli("--models", dir.File("bad.json"), "models", "list");
+        Assert.Equal(1, code);
+        Assert.StartsWith("error:", output);
+
+        File.WriteAllText(dir.File("models.json"), TestKit.ModelsJson("http://127.0.0.1:9/v1").Replace("\"watts\":300,", ""));
+        string[] g = ["--db", dir.File("e.db"), "--models", dir.File("models.json")];
+        (_, output) = await Cli([.. g, "suite", "generate", "--name", "s", "--seed", "1", "--family", "mathematics:1:2"]);
+        var suiteShort = output.Split(' ')[1][..8];
+        (code, output) = await Cli([.. g, "run", "start", "--suite", suiteShort, "--model", "fake/m1"]);
+        Assert.Equal(1, code);
+        Assert.Contains("'fake/m1'", output);
+        Assert.Contains("energy.watts", output);
+
+        File.WriteAllText(dir.File("models.json"), TestKit.ModelsJson("http://127.0.0.1:9/v1"));
+        (code, output) = await Cli([.. g, "run", "start", "--suite", suiteShort, "--model", "manual/chat-ui"]);
+        Assert.Equal(1, code);
+        (code, _) = await Cli([.. g, "run", "start", "--suite", suiteShort, "--model", "fake/m1", "--mode", "Manual"]);
+        Assert.Equal(1, code);
+        using (var db = BenchDbOpen(dir)) Assert.Empty(db.Runs);
+
+        var blocker = dir.File("file.txt");
+        File.WriteAllText(blocker, "x");
+        (code, output) = await Cli([.. g, "manual", "export", "--suite", suiteShort, "--model", "manual/chat-ui", "--out", Path.Combine(blocker, "sub")]);
+        Assert.Equal(1, code);
+        Assert.Contains("error:", output);
+    }
+
     private static List<ModelBench.Core.Generation.FamilySpec> Parse(string text)
         => ModelBench.Cli.Commands.SuiteCommands.ParseFamily(text).ToList();
 

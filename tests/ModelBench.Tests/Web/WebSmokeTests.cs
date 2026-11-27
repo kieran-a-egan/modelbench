@@ -128,6 +128,17 @@ public class WebSmokeTests(WebFixture fx) : IClassFixture<WebFixture>
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/export/runs/{fx.RunA.Id}/secrets.csv")).StatusCode);
     }
 
+    [Fact] public void ModelsFileRefusesAnEnergyBlockMissingWatts()
+    {
+        using var dir = new TempDir();
+        var good = TestKit.ModelsJson("http://127.0.0.1:9/v1");
+        File.WriteAllText(dir.File("models.json"), good);
+        var f = new ModelsFile(dir.File("models.json"));
+        var err = f.Save(good.Replace("\"watts\":300,", ""));
+        Assert.Contains("energy.watts", err);
+        Assert.Equal(good, File.ReadAllText(dir.File("models.json")));
+    }
+
     [Fact] public void ModelsFileRestoresMaskedSecretsOnSave()
     {
         using var dir = new TempDir();

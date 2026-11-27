@@ -23,6 +23,8 @@ public static class RunService
         if (repeats < 1) throw new ArgumentException("repeats must be >= 1");
         if (timeoutSeconds < 1) throw new ArgumentException("timeout must be >= 1 second");
         if (!db.Suites.Any(s => s.Id == suiteId)) throw new InvalidOperationException($"suite {suiteId} is not persisted");
+        if ((mode == ExecutionMode.Manual) != (model.Api == ApiKind.Manual))
+            throw new InvalidOperationException(mode == ExecutionMode.Manual ? $"'{model.Ref}' is not an api:manual model, so it cannot do a Manual run" : $"'{model.Ref}' is an api:manual model; use 'manual export' and 'manual import' (or a Manual run)");
         var taskMode = mode == ExecutionMode.Manual ? ExecutionMode.SingleTurn : mode;
         if (!db.Tasks.Any(t => t.SuiteId == suiteId && t.Mode == taskMode))
             throw new InvalidOperationException($"suite has no {taskMode} tasks, so a {mode} run would be empty");

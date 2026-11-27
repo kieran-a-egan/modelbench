@@ -71,7 +71,7 @@ else
 
     protected override void OnInitialized()
     {
-        try { entries = Models.Exists ? Models.Catalog().List() : []; }
+        try { entries = Models.Exists ? Models.Catalog().List().Where(e => e.Api != ApiKind.Manual).ToList() : []; }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException) { error = "models.json: " + ex.Message; }
         modelRef = entries.FirstOrDefault()?.Ref ?? "";
         Load();

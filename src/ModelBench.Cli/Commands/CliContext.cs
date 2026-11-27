@@ -25,6 +25,16 @@ internal sealed class CliContext
             await pr.InvocationConfiguration.Error.WriteLineAsync("error: " + ConsoleSafe.Sanitize(ex.Message));
             return 1;
         }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or UnauthorizedAccessException or HttpRequestException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            await pr.InvocationConfiguration.Error.WriteLineAsync("error: " + ConsoleSafe.Sanitize(ex.Message));
+            return 1;
+        }
+        catch (OperationCanceledException)
+        {
+            await pr.InvocationConfiguration.Error.WriteLineAsync("error: cancelled");
+            return 130;
+        }
     }
 
     /// <summary>Accepts a full Guid or any unique prefix of one.</summary>
