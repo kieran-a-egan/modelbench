@@ -3,7 +3,7 @@
 Commands are shown as `modelbench ...`. From the repository use `dotnet run --project src/ModelBench.Cli -- ...`. Two options apply to every command:
 
 - `--db <path>`: the SQLite database. Default: the `MODELBENCH_DB` environment variable, then `~/.modelbench/modelbench.db`.
-- `--models <path>`: the models file. Default: the `MODELBENCH_MODELS` environment variable, then `./models.json`, then `~/.modelbench/models.json`.
+- `--models <path>`: the models file. Default: the `MODELBENCH_MODELS` environment variable, then `./models.json`, then `~/.modelbench/models.json`. The CLI refuses an explicit path that does not exist; the web editor treats it as a new, empty file and creates it on save, so check the path it shows if your models are missing.
 
 Run, suite and attempt ids can be abbreviated to any unique prefix. Errors, including a malformed models file, unreadable or unwritable paths, HTTP and database failures, print `error: ...` and exit with code 1 (130 when cancelled). A model whose `energy` block lacks a numeric `watts` or `pricePerKwh` is refused with a message naming the model and field, and the web editor refuses to save such a file.
 

@@ -105,6 +105,15 @@ public class SandboxFunctionalTests
     }
 
     [Fact]
+    public async Task CSharp_CapsCompileErrorsAt500Chars()
+    {
+        var body = string.Concat(Enumerable.Range(0, 100).Select(i => $"  public static int F{i}() {{ return \"x\"; }}\n"));
+        var r = await Run(SandboxLanguage.CSharp, $"public static class S {{\n{body}}}\n", "S.F0", action: SandboxAction.Compile);
+        Assert.False(r.Compiled);
+        Assert.Equal(500, r.CompileErrors!.Length);
+    }
+
+    [Fact]
     public async Task CSharp_InspectsFacts()
     {
         var code = "using System.Text;\npublic static class S {\n public static int Fact(int n) { return n < 2 ? 1 : n * Fact(n - 1); }\n public static void G(int[] a) { foreach (var x in a) Console.WriteLine(x); }\n}\n";
