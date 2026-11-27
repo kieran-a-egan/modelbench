@@ -1,7 +1,13 @@
-import ast, base64, ctypes, io, json, os, select, shutil, signal, sys, time
+import ast, base64, ctypes, io, json, os, select, shutil, signal, sys, threading, time
 
 CAP = 1 << 20
 MAX_ERR = 500
+# Total JSON bytes of all cases in one frame. The host keeps the first 1 MiB (DockerSandbox.OutputCap) of
+# "MBRESULT:<nonce>:<base64>\n"; base64 of 1 MiB - ~100 is ~786 KB of JSON, so this leaves ~46 KB for the envelope and the
+# "output budget exceeded" errors. Keep in step with DockerSandbox.OutputCap and the C# runner.
+OUTPUT_BUDGET = 740_000
+# The runner hard-exits this long after the last case could legitimately finish, so a dead host cannot leave the container running.
+SELF_DEADLINE_SLACK_MS = 4_000
 
 
 class Capped(io.StringIO):
@@ -134,7 +140,7 @@ def rm_tree(path):
 stuck = False  # set when reap() could not clear the case's state
 
 
-def fork_case(code_obj, entry, args, reps):
+def fork_case(code_obj, entry, args, reps, timeout_ms):
     """MB-004: candidate code runs only in a child. The runner checks its exit status and is the only writer of frames."""
     r, w = os.pipe()
     pid = os.fork()
@@ -154,6 +160,8 @@ def fork_case(code_obj, entry, args, reps):
             os._exit(1)
     os.close(w)
     chunks, size, status = [], 0, None
+    limit_ms = timeout_ms * max(1, reps)
+    deadline, timed_out = time.monotonic() + limit_ms / 1000, False
     while True:
         if select.select([r], [], [], 0.05)[0]:
             b = os.read(r, 65536)
@@ -167,10 +175,17 @@ def fork_case(code_obj, entry, args, reps):
             if done:
                 status = st
                 reap()  # the case's own children may still hold the pipe open; stopping them ends it
+        if status is None and not timed_out and time.monotonic() > deadline:
+            timed_out = True  # per-case deadline: only this case fails
+            os.kill(pid, signal.SIGKILL)
+            status = os.waitpid(pid, 0)[1]  # before reap(), which would reap the child too
+            reap()
     os.close(r)
     if status is None:
         status = os.waitpid(pid, 0)[1]
     reap()
+    if timed_out:
+        return {"output": None, "error": "case timed out after %d ms" % limit_ms, "elapsedMs": 0.0}
     if os.WIFSIGNALED(status):
         return {"output": None, "error": "case process killed by signal %d" % os.WTERMSIG(status), "elapsedMs": 0.0}
     if os.WEXITSTATUS(status) != 0:
@@ -189,7 +204,13 @@ def main():
     # Not dumpable: case processes run as the same user but cannot open /proc/1/fd/1 or /proc/1/mem to reach the frame stream.
     if ctypes.CDLL(None).prctl(4, 0, 0, 0, 0) != 0:  # PR_SET_DUMPABLE
         raise OSError("prctl(PR_SET_DUMPABLE) failed")
+    for sig in (signal.SIGINT, signal.SIGTERM):  # as PID 1 a case must not be able to stop the runner
+        signal.signal(sig, signal.SIG_IGN)
     req = json.loads(sys.stdin.read())
+    calls = max(1, req["repetitions"]) * max(1, len(req["inputs"])) if req["action"] == "run" else 1
+    watchdog = threading.Timer((req["timeoutMs"] * calls + SELF_DEADLINE_SLACK_MS) / 1000, os._exit, [1])
+    watchdog.daemon = True
+    watchdog.start()
     real = os.fdopen(os.dup(1), "w")
     nonce = req["nonce"]
     result = {"compiled": True, "compileErrors": None, "cases": [], "astFacts": None}
@@ -201,11 +222,17 @@ def main():
         else:
             code_obj = compile(req["code"], "<candidate>", "exec")
             if action == "run":
+                used = 0
                 for i, args in enumerate(req["inputs"]):
                     if stuck:
                         c = {"output": None, "error": "sandbox state could not be cleared after case %d" % (i - 1), "elapsedMs": 0.0}
                     else:
-                        c = fork_case(code_obj, req["entryPoint"], args, req["repetitions"])
+                        c = fork_case(code_obj, req["entryPoint"], args, req["repetitions"], req["timeoutMs"])
+                        size = len(json.dumps(c, separators=(",", ":")))
+                        if used + size > OUTPUT_BUDGET:
+                            c = {"output": None, "error": "output budget exceeded", "elapsedMs": 0.0}
+                        else:
+                            used += size
                     result["cases"].append(dict(index=i, **c))
     except SyntaxError as e:
         result["compiled"], result["compileErrors"] = False, syntax_error(e)

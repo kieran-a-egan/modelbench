@@ -134,7 +134,7 @@ public class CodeGraderTests
         Assert.False(crash.Single().Passed);
         Assert.Contains("case process exited with status 3", crash.Single().Diagnostic); // module code runs in each case's process
         var hang = await Grade("unit-tests", cfg, "def f(x):\n    while True:\n        pass\n", sb);
-        Assert.Equal("timed out", hang.Single().Diagnostic);
+        Assert.Equal("error: case timed out after 2000 ms", hang.Single().Diagnostic); // the runner kills the case; the host backstop (TimedOut) stays unused
     }
 
     [Fact] public async Task ExpectedValuesNeverReachTheSandbox()
@@ -179,6 +179,14 @@ public class CodeGraderTests
         Assert.False(r[1].Passed);
         Assert.Contains("exceeds the 100 ms budget", r[1].Diagnostic);
         Assert.Contains("informational", r[1].Diagnostic);
+    }
+
+    [Fact] public async Task PerformanceCaseKilledByTheRunnerCountsAsKilledAtBudget()
+    {
+        var r = await Grade("performance", Perf(1000), Double, new FakeSandbox(_ => Task.FromResult(
+            new SandboxResult(true, null, [new CaseResult(0, null, "case timed out after 1000 ms", 0)], null, false, 0, ""))));
+        Assert.Equal("killed at budget", r[1].Actual);
+        Assert.All(r, o => Assert.False(o.Passed));
     }
 
     [Fact] public async Task PerformanceTimeoutFailsBothAssertionsAndWrongOutputEarnsNoPerformanceCredit()
@@ -246,9 +254,9 @@ public class CodeGraderTests
         var sb = await SandboxEnv.Require();
         var fast = await Grade("performance", Perf(10_000), Double, sb);
         Assert.All(fast, o => Assert.True(o.Passed, o.Diagnostic));
-        // A budget that cannot include container start-up: right answer, but over budget and not killed.
+        // A budget that cannot include container start-up: never within budget.
         var tight = await Grade("performance", Perf(1), Double, sb);
-        Assert.True(tight[0].Passed);
+        Assert.False(tight[1].Passed); // the runner kills the case at 1 ms: killed at budget
         Assert.False(tight[1].Passed);
         var hang = await Grade("performance", Perf(500), "def f(x):\n    while True:\n        pass\n", sb);
         Assert.All(hang, o => Assert.False(o.Passed));

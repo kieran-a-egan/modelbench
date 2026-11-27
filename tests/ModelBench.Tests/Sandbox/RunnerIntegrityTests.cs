@@ -179,6 +179,51 @@ public class RunnerIntegrityTests
         Assert.Equal("4", Out(r, 4));
     }
 
+    [Fact] public async Task PythonCaseCannotSignalTheRunner()
+    {
+        var r = await Py("""
+            import os, signal
+            def f(x):
+                if x == 0:
+                    os.kill(1, signal.SIGINT); os.kill(1, signal.SIGTERM)
+                return x
+            """, "f", 10_000, "[0]", "[1]");
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal("0", Out(r, 0));
+        Assert.Equal("1", Out(r, 1));
+    }
+
+    [Fact] public async Task CSharpCaseCannotSignalTheRunner()
+    {
+        var r = await Cs("""
+            using System.Diagnostics;
+            public static class S { public static int F(int x) {
+                if (x == 0) foreach (var s in new[] { "INT", "TERM" }) Process.Start("kill", new[] { "-" + s, "1" })!.WaitForExit();
+                return x; } }
+            """, "S.F", 10_000, "[0]", "[1]");
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal("0", Out(r, 0));
+        Assert.Equal("1", Out(r, 1));
+    }
+
+    [Fact] public async Task AnOversizedOutputFailsAloneAndTheFrameStillFits()
+    {
+        var r = await Py("def f(x):\n    return 'a' * 700_000 if x == 0 else 'b' * 100_000 if x == 1 else x\n", "f", 10_000, "[0]", "[1]", "[2]");
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal(700_002, Out(r, 0).Length);
+        Assert.Equal("output budget exceeded", r.Cases[1].Error);
+        Assert.Equal("2", Out(r, 2));
+    }
+
+    [Fact] public async Task CSharpOversizedOutputFailsAloneAndTheFrameStillFits()
+    {
+        var r = await Cs("public static class S { public static object F(int x) => x == 0 ? new string('a', 700_000) : x == 1 ? new string('b', 100_000) : x; }", "S.F", 10_000, "[0]", "[1]", "[2]");
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal(700_002, Out(r, 0).Length);
+        Assert.Equal("output budget exceeded", r.Cases[1].Error);
+        Assert.Equal("2", Out(r, 2));
+    }
+
     [Fact] public async Task CSharpPrematureExitFailsOnlyItsOwnCase()
     {
         var r = await Cs("""
