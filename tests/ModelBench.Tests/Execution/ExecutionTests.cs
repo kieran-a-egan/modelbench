@@ -353,6 +353,22 @@ public class ManualExchangeTests
         Assert.Equal(RunStatus.Pending, db.Runs.AsNoTracking().Single(r => r.Id == run.Id).Status);
     }
 
+    [Fact] public async Task NullLineIsReportedAsAMalformedLineAndTheImportContinues()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = TestKit.MakeSuite(db, 2);
+        var model = ModelCatalog.Parse(TestKit.ModelsJson("http://127.0.0.1:9/v1")).Resolve("manual/chat-ui");
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.Manual, 1, 60, new RetryPolicy(), "manual");
+        var task = db.Tasks.First(t => t.SuiteId == suite.Id);
+        File.WriteAllLines(dir.File("r.jsonl"), ["null", JsonUtil.Serialize(new Row(task.Id, 0, $"<answer>{TestKit.Expected(task)}</answer>"))]);
+
+        var report = await ManualExchange.ImportAsync(db, run.Id, dir.File("r.jsonl"), new UnavailableSandbox(), default);
+        Assert.Equal(1, report.Graded);
+        Assert.Single(report.Errors);
+        Assert.StartsWith("line 1:", report.Errors[0]);
+    }
+
     [Fact] public void ExportRejectsNonManualRuns()
     {
         using var dir = new TempDir();

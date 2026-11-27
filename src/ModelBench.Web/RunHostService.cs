@@ -18,9 +18,12 @@ public sealed class RunHostService(Func<BenchDb> openDb, ILogger<RunHostService>
 
     public void Enqueue(Guid runId, ResolvedModel model, bool retryInfra = false)
     {
-        _pending[runId] = (model, new CancellationTokenSource(), retryInfra);
-        _queue.Writer.TryWrite(runId);
+        // Idempotent: a second enqueue of a run already queued or executing (e.g. Resume racing the initial Enqueue) is a no-op.
+        if (_pending.TryAdd(runId, (model, new CancellationTokenSource(), retryInfra))) _queue.Writer.TryWrite(runId);
     }
+
+    /// <summary>True while this process has the run queued or executing.</summary>
+    public bool IsTracked(Guid runId) => _pending.ContainsKey(runId);
 
     /// <summary>Validates and queues a resume (see RunService.PrepareResume). Throws InvalidOperationException with the reason when refused.</summary>
     public void Resume(Guid runId, ModelCatalog catalog, bool retryInfra)

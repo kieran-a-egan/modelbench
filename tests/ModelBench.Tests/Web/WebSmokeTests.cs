@@ -93,6 +93,18 @@ public class WebSmokeTests(WebFixture fx) : IClassFixture<WebFixture>
         Assert.DoesNotContain("Resume run", await Ok($"/runs/{fx.RunA.Id}"));
     }
 
+    [Fact] public async Task PendingRunNotQueuedInThisProcessOffersResume()
+    {
+        Run pending;
+        using (var db = fx.Dir.OpenDb())
+        {
+            pending = ReportSeed.AddRun(db, fx.Suite, "fake/m1", ExecutionMode.SingleTurn, ReportSeed.T0.AddDays(3));
+            pending.Status = RunStatus.Pending; // queued by a dashboard process that has since stopped
+            db.SaveChanges();
+        }
+        Assert.Contains("Resume run", await Ok($"/runs/{pending.Id}"));
+    }
+
     [Fact] public async Task CompareShowsDiffAndRefusesDifferentHashes()
     {
         var html = await Ok($"/compare?a={fx.RunA.Id}&b={fx.RunB.Id}");

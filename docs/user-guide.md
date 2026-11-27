@@ -125,7 +125,7 @@ modelbench export --run <run> --format json --out run.json
 modelbench export --run <run> --format csv --out ./run-csv
 ```
 
-Leaderboards are separate per execution mode and group runs by suite **content hash**, so equal suites generated twice rank together. By default only the latest completed run per model and suite is listed; `--all-runs` shows all. `compare` refuses runs on different suite contents. CSV export writes `runs.csv`, `attempts.csv` and `assertions.csv`.
+Leaderboards are separate per execution mode and group runs by suite **content hash**, so equal suites generated twice rank together. By default one run per model, suite and grading version is listed: the latest authoritative (complete) run, or the latest completed run when none is complete. `--all-runs` shows all. `compare` refuses runs on different suite contents. CSV export writes `runs.csv`, `attempts.csv` and `assertions.csv`.
 
 ### Manual, selftest, sandbox
 
@@ -275,7 +275,7 @@ Because graders never call a model, a differing regrade always means a grader, f
 
 ## Dashboard
 
-`modelbench web` serves the dashboard on `http://127.0.0.1:5180` and opens a browser (`--port`, `--no-browser`; Ctrl+C stops it). It waits for its own dashboard process to answer with a per-launch token, so another service on the same port is never mistaken for it; if the dashboard exits or does not answer within 30 seconds, the command fails. It uses the same `--db`/`--models` resolution as every other command. It needs the dashboard installed next to the CLI by `install.ps1`; from a checkout, `dotnet run --project src/ModelBench.Web` does the same (set `MODELBENCH_DB` and `MODELBENCH_MODELS` to choose files). It has Models (with a masked editor for `models.json`), Suites, Runs (start, progress, cancel), per-mode leaderboards, breakdowns, history, compare, task and attempt detail with raw prompts and responses, and CSV/JSON exports. On a run's page, **Resume** appears for Cancelled, Failed and Running runs, with a checkbox to retry infrastructure errors; if the suite or model configuration changed, or another process is executing the run, the refusal is shown on the page. The dashboard executes runs one at a time in the background of the web process.
+`modelbench web` serves the dashboard on `http://127.0.0.1:5180` and opens a browser (`--port`, `--no-browser`; Ctrl+C stops it). It waits for its own dashboard process to answer with a per-launch token, so another service on the same port is never mistaken for it; if the dashboard exits or does not answer within 30 seconds, the command fails. It uses the same `--db`/`--models` resolution as every other command. It needs the dashboard installed next to the CLI by `install.ps1`; from a checkout, `dotnet run --project src/ModelBench.Web` does the same (set `MODELBENCH_DB` and `MODELBENCH_MODELS` to choose files). It has Models (with a masked editor for `models.json`), Suites, Runs (start, progress, cancel), per-mode leaderboards, breakdowns, history, compare, task and attempt detail with raw prompts and responses, and CSV/JSON exports. On a run's page, **Resume** appears for Cancelled, Failed and Running runs, and for Pending runs the dashboard process is not tracking (for example, queued before a restart), with a checkbox to retry infrastructure errors; if the suite or model configuration changed, or another process is executing the run, the refusal is shown on the page. The dashboard executes runs one at a time in the background of the web process.
 
 ## Troubleshooting
 
