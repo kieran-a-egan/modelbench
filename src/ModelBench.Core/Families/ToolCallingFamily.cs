@@ -14,7 +14,7 @@ namespace ModelBench.Core.Families;
 public sealed class ToolCallingFamily : IBenchmarkFamily
 {
     public string Id => "tool-calling";
-    public int Version => 2;
+    public int Version => 3; // 3: money questions say to round only the final total (issue #15)
     public string Category => "tool-calling";
     public string Description => "Answer questions by chaining 1-6 calls to record, exchange-rate, stock and calculator tools.";
     public ExecutionMode Mode => ExecutionMode.ToolAssisted;
@@ -114,21 +114,21 @@ public sealed class ToolCallingFamily : IBenchmarkFamily
                 var amount = rng.Range(10000, 500000) / 100m;
                 var from = rng.Pick(Currencies);
                 var to = rng.Pick(Currencies.Where(x => x != from).ToList());
-                question = $"What is {Money(amount)} {from} worth in {to}? Round to 2 decimals.";
+                question = $"What is {Money(amount)} {from} worth in {to}? Round only the final total to 2 decimals.";
                 steps.Add(new Step("get_exchange_rate", new { from, to }));
                 steps.Add(new Step("calculate", new { expression = $"{Money(amount)} * {RateText(Rate(from, to))}" }));
                 reference = new Ref("convert", [], null, from, to, amount);
                 break;
             case 3:
                 var target = rng.Pick(Currencies.Where(x => x != orderCur[0]).ToList());
-                question = $"What is the total value of all pending orders of customer {a0.Id}, converted to {target}? Round to 2 decimals.";
+                question = $"What is the total value of all pending orders of customer {a0.Id}, converted to {target}? Round only the final total to 2 decimals.";
                 steps.Add(new Step("list_orders", new { customer_id = a0.Id }));
                 steps.Add(new Step("get_exchange_rate", new { from = orderCur[0], to = target }));
                 steps.Add(new Step("calculate", new { expression = $"({Sum(a0.Id)}) * {RateText(Rate(orderCur[0], target))}" }));
                 reference = new Ref("pending-total", [a0.Id], null, null, target, 0);
                 break;
             case 4:
-                question = $"What is the total value of all pending orders of customer {a0.Id}, converted to that customer's reporting currency? Round to 2 decimals.";
+                question = $"What is the total value of all pending orders of customer {a0.Id}, converted to that customer's reporting currency? Round only the final total to 2 decimals.";
                 steps.Add(new Step("lookup_customer", new { customer_id = a0.Id }));
                 steps.Add(new Step("list_orders", new { customer_id = a0.Id }));
                 steps.Add(new Step("get_exchange_rate", new { from = orderCur[0], to = a0.Currency }));
@@ -137,7 +137,7 @@ public sealed class ToolCallingFamily : IBenchmarkFamily
                 break;
             default:
                 var b0 = customers[1];
-                question = $"What is the combined value of all pending orders of customers {a0.Id} and {b0.Id}, expressed in the reporting currency of {a0.Id}? Round to 2 decimals.";
+                question = $"What is the combined value of all pending orders of customers {a0.Id} and {b0.Id}, expressed in the reporting currency of {a0.Id}? Round only the final total to 2 decimals.";
                 steps.Add(new Step("lookup_customer", new { customer_id = a0.Id }));
                 steps.Add(new Step("list_orders", new { customer_id = a0.Id }));
                 steps.Add(new Step("list_orders", new { customer_id = b0.Id }));

@@ -24,8 +24,14 @@ public class Phase5GraderTests
     {
         var state = Json("""{"files":{"/a.b":"x","/gone":null},"tickets":{"T-1":{"status":"closed","n":1.0}},"list":[{"v":1},{"v":2}]}""");
         var os = await Grade("env-state", new { expected = Json("""{"files":{"/a.b":"x","/gone":null,"/never":null},"tickets":{"T-1":{"status":"closed","n":1}},"list":[{"v":1},{"v":2}]}""") }, state);
-        Assert.Equal(["files./a.b", "files./gone", "files./never", "tickets.T-1.status", "tickets.T-1.n", "list[0].v", "list[1].v"], os.Select(o => o.Name));
+        Assert.Equal(["files./a.b", "files./gone", "files./never", "tickets.T-1.status", "tickets.T-1.n", "list.length", "list[0].v", "list[1].v"], os.Select(o => o.Name));
         Assert.All(os, o => Assert.True(o.Passed, o.Diagnostic));
+    }
+
+    [Fact] public async Task EnvStateArrayWithExtraElementsFails()
+    {
+        var os = await Grade("env-state", new { expected = Json("""{"list":[1,2]}""") }, Json("""{"list":[1,2,3]}"""));
+        Assert.Equal(["list.length"], os.Where(o => !o.Passed).Select(o => o.Name));
     }
 
     [Fact] public async Task EnvStateReportsMismatchMissingAndPresentAbsences()
@@ -128,6 +134,13 @@ public class WorkspaceEnvironmentTests
         Assert.Equal(before, e.State.GetRawText());
     }
 
+    [Fact] public void NullOptionalArgumentsAreTreatedAsAbsent()
+    {
+        var e = Env();
+        Assert.DoesNotContain("\"error\"", Run(e, "update_ticket", new { id = "T-1", status = "closed", assignee = (string?)null }));
+        Assert.Contains("\"joel\"", Run(e, "list_tickets", new { status = (string?)null }));
+    }
+
     [Fact] public void PathsAreNormalisedInsideTheRoot()
     {
         var e = Env();
@@ -218,7 +231,7 @@ public class Phase5FamilyTests
     [Theory]
     [InlineData("agentic-task-completion", "14afd267ae7eed786eaf2d20ace58a5aaac38d0c1565c6967e961427efdbf2e2")]
     [InlineData("adversarial-robustness", "5e653b087f466c5cad6b498a978d614722735341ec6d58f07b7a54572a1bee36")]
-    [InlineData("adversarial-tools", "d5adb94599732887c4e3bc43ad05fd3ca5ffd608df6f1daf0c1ba23817af4efa")]
+    [InlineData("adversarial-tools", "8a461cb2a9dfe59f6e4238fb9482ee46738449bf82880192f5b6539587b98896")]
     public void GoldenSuiteHashIsPinned(string id, string hash)
         => Assert.Equal(hash, SuiteGenerator.Generate(new SuiteSpec("golden", 7, Enumerable.Range(1, 5).Select(c => new FamilySpec(id, c, 2)).ToList())).ContentHash);
 

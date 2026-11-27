@@ -23,8 +23,9 @@ public static class GradingPipeline
     /// Bump whenever a change can move an existing attempt's Score or Passed. Stored on Run.GradingVersion.
     /// 1: original. 2: end-to-end ranking, exact numbers, executed-only tool credit, performance gated on correctness and unscored (issue #1).
     /// 3: fenced JSON inside answer tags parses; canary scan ignores inline reasoning (issue #7).
+    /// 4: a grader spec contributes its declared Weight in total, split evenly across the outcomes it emits (issue #15).
     /// </summary>
-    public const int Version = 3;
+    public const int Version = 4;
 
     public static async Task<GradingResult> GradeAsync(
         TaskPrompt prompt, TaskHidden hidden, IReadOnlyList<ChatMessage> transcript,
@@ -54,11 +55,12 @@ public static class GradingPipeline
             // v2 (ADR 0006): performance is empirical (host wall time), so whatever the stored spec says (frozen v1 suites, static definitions)
             // it is reported but never moves Score or Passed.
             var scored = spec.Type != "performance";
-            foreach (var o in await GraderRegistry.Get(spec.Type).GradeAsync(spec, ctx))
+            var outcomes = await GraderRegistry.Get(spec.Type).GradeAsync(spec, ctx);
+            foreach (var o in outcomes)
                 results.Add(new AssertionResult
                 {
                     Grader = spec.Type, Name = o.Name, Expected = o.Expected, Actual = o.Actual, Score = o.Score,
-                    Weight = scored ? spec.Weight : 0, Required = scored && spec.Required, Passed = o.Passed, Diagnostic = o.Diagnostic,
+                    Weight = scored ? spec.Weight / outcomes.Count : 0, Required = scored && spec.Required, Passed = o.Passed, Diagnostic = o.Diagnostic,
                 });
         }
 

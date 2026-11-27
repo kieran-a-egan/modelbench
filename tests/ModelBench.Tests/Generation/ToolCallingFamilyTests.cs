@@ -45,7 +45,7 @@ public class ToolCallingFamilyTests
             Assert.Equal(JsonUtil.Serialize(a.Prompt), JsonUtil.Serialize(b.Prompt));
             Assert.Equal(JsonUtil.Serialize(a.Hidden), JsonUtil.Serialize(b.Hidden));
         }
-        Assert.Equal("e895b2a2140e2c82b72b13a46ad7cfdd3febde0115348af9a3b09d637c0d0465", SuiteGenerator.Generate(new SuiteSpec("golden", 7, Enumerable.Range(1, 5).Select(c => new FamilySpec("tool-calling", c, 1)).ToList())).ContentHash);
+        Assert.Equal("b7717868aa01a5ee26490fc51f488f480e8b213c1d26abf2da2381a33ca757a8", SuiteGenerator.Generate(new SuiteSpec("golden", 7, Enumerable.Range(1, 5).Select(c => new FamilySpec("tool-calling", c, 1)).ToList())).ContentHash);
     }
 
     [Fact] public void PromptNeverContainsTheTables()
