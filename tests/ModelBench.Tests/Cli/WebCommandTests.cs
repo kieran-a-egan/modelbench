@@ -75,22 +75,33 @@ public class WebCommandTests
     [Fact] public async Task StartsAnnouncesAndStopsItsOwnChild()
     {
         using var dir = new TempDir();
-        var port = FreePort();
-        var sw = new StringWriter();
-        var output = TextWriter.Synchronized(sw);
-        string Text() { lock (output) return sw.ToString(); } // SyncTextWriter locks on itself
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-        var run = CliApp.RunAsync(["--db", dir.File("w.db"), "web", "--no-browser", "--port", port.ToString()], output, output, cts.Token);
         using var http = new HttpClient();
-        try
+        // FreePort can lose the port to another process before the child binds it: that shows as an early exit, so try a new port (up to 3 times)
+        for (var attempt = 1; ; attempt++)
         {
-            var deadline = DateTime.UtcNow.AddSeconds(60);
-            while (!Text().Contains("dashboard:") && !run.IsCompleted && DateTime.UtcNow < deadline) await Task.Delay(100, Ct);
-            Assert.Contains($"dashboard: http://127.0.0.1:{port}", Text());
-            Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"http://127.0.0.1:{port}/", Ct)).StatusCode);
+            var port = FreePort();
+            var sw = new StringWriter();
+            var output = TextWriter.Synchronized(sw);
+            string Text() { lock (output) return sw.ToString(); } // SyncTextWriter locks on itself
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+            var run = CliApp.RunAsync(["--db", dir.File("w.db"), "web", "--no-browser", "--port", port.ToString()], output, output, cts.Token);
+            var lostPort = false;
+            try
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(30); // the command's own start-up limit
+                while (!Text().Contains("dashboard:") && !run.IsCompleted && DateTime.UtcNow < deadline) await Task.Delay(100, Ct);
+                lostPort = attempt < 3 && !Text().Contains("dashboard:") && run.IsCompleted;
+                if (!lostPort)
+                {
+                    Assert.Contains($"dashboard: http://127.0.0.1:{port}", Text());
+                    Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"http://127.0.0.1:{port}/", Ct)).StatusCode);
+                }
+            }
+            finally { await cts.CancelAsync(); } // also on failure, so the child is never left running
+            if (lostPort) { await run; continue; }
+            Assert.Equal(0, await run);
+            await Assert.ThrowsAsync<HttpRequestException>(() => http.GetAsync($"http://127.0.0.1:{port}/", Ct)); // child killed
+            return;
         }
-        finally { await cts.CancelAsync(); } // also on failure, so the child is never left running
-        Assert.Equal(0, await run);
-        await Assert.ThrowsAsync<HttpRequestException>(() => http.GetAsync($"http://127.0.0.1:{port}/", Ct)); // child killed
     }
 }

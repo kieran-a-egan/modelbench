@@ -131,9 +131,9 @@ public class SandboxFunctionalTests
     public void WallClockFormula()
     {
         var one = new SandboxRequest(SandboxLanguage.Python, SandboxAction.Run, "", "f", [], 1000, 1);
-        Assert.Equal(6000, DockerSandbox.WallClockMs(one));
+        Assert.Equal(6100, DockerSandbox.WallClockMs(one)); // 1 s + 5 s + 100 ms per call
         var many = one with { Inputs = new[] { default(System.Text.Json.JsonElement), default, default }, Repetitions = 2 };
-        Assert.Equal(1000 * 6 + 5000, DockerSandbox.WallClockMs(many));
-        Assert.Equal(6000, DockerSandbox.WallClockMs(many with { Action = SandboxAction.Compile }));
+        Assert.Equal(1000 * 6 + 5000 + 100 * 6, DockerSandbox.WallClockMs(many));
+        Assert.Equal(6100, DockerSandbox.WallClockMs(many with { Action = SandboxAction.Compile }));
     }
 }

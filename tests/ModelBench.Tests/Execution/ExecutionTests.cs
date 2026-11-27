@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using ModelBench.Core.Config;
 using ModelBench.Core.Domain;
 using ModelBench.Core.Execution;
+using ModelBench.Core.Families;
 using ModelBench.Core.Metrics;
 using ModelBench.Core.Persistence;
 using ModelBench.Core.Providers;
@@ -266,33 +267,45 @@ public class HiddenIsolationTests
     {
         using var dir = new TempDir();
         using var db = dir.OpenDb();
-        var suite = ModelBench.Core.Generation.SuiteGenerator.Generate(new ModelBench.Core.Generation.SuiteSpec("iso", 5,
-            [new("mathematics", 1, 4), new("mathematics", 5, 4)]));
+        // every registered family at every complexity, one task each; one run per execution mode
+        var specs = FamilyRegistry.All.SelectMany(f => Enumerable.Range(Complexity.Min, Complexity.Max).Select(c => (f, c))).ToList();
+        var suites = specs.GroupBy(s => s.f.Mode).ToDictionary(g => g.Key, g => ModelBench.Core.Generation.SuiteGenerator.Generate(
+            new ModelBench.Core.Generation.SuiteSpec("iso-" + g.Key, 5, g.Select(s => new ModelBench.Core.Generation.FamilySpec(s.f.Id, s.c, 1)).ToList())));
         var markers = new List<string>();
-        foreach (var t in suite.Tasks)
+        foreach (var t in suites.Values.SelectMany(s => s.Tasks))
         {
-            var marker = $"HIDDEN-MARKER-{t.Index}-{Guid.NewGuid():N}";
+            var marker = $"HIDDEN-MARKER-{markers.Count}-{Guid.NewGuid():N}";
             markers.Add(marker);
             var hidden = JsonUtil.Deserialize<TaskHidden>(t.HiddenJson);
             t.HiddenJson = JsonUtil.Serialize(hidden with { Reference = JsonUtil.Element(new { marker, original = hidden.Reference }) });
         }
-        ModelBench.Core.Generation.SuiteGenerator.Persist(db, suite);
+        foreach (var s in suites.Values) ModelBench.Core.Generation.SuiteGenerator.Persist(db, s);
         Assert.All(markers, m => Assert.Contains(m, string.Concat(db.Tasks.Select(t => t.HiddenJson)))); // the markers really are stored
 
-        await using var server = await FakeServer.StartAsync((_, _) => FakeReply.Text("<answer>1</answer>"));
+        // the reply carries an answer and a code block in both languages, so code graders reach the sandbox
+        const string reply = "<answer>1</answer>\n```python\ndef f(x):\n    return x\n```\n```csharp\npublic static class S { public static int F(int x) => x; }\n```";
+        await using var server = await FakeServer.StartAsync((_, _) => FakeReply.Text(reply));
         var model = TestKit.Model(server.BaseUrl);
-        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null);
-        await new RunExecutor(ProviderFactory.Create(model), model, new UnavailableSandbox()).ExecuteAsync(db, run.Id, default);
+        var sandbox = new RecordingSandbox(new FakeSandbox(_ => Task.FromResult(FakeSandbox.Crashed)));
+        var runs = new List<Guid>();
+        foreach (var (mode, suite) in suites)
+        {
+            var run = RunService.CreateRun(db, suite.Id, model, mode, 1, 30, new RetryPolicy(), null);
+            runs.Add(run.Id);
+            await new RunExecutor(ProviderFactory.Create(model), model, sandbox).ExecuteAsync(db, run.Id, default);
+        }
 
-        Assert.Equal(8, server.Bodies.Count);
-        var stored = string.Concat(db.Attempts.Where(a => a.RunId == run.Id).Select(a => a.RawRequestsJson + a.TranscriptJson));
+        Assert.NotEmpty(server.Bodies);
+        Assert.NotEmpty(sandbox.Requests); // code families really exercised the sandbox path
+        var stored = string.Concat(db.Attempts.Where(a => runs.Contains(a.RunId)).Select(a => a.RawRequestsJson + a.TranscriptJson));
+        var sent = string.Concat(server.Bodies) + string.Concat(sandbox.Requests.Select(r => DockerSandbox.BuildRequestJson(r, "n")));
         Assert.All(markers, m =>
         {
-            Assert.DoesNotContain(m, string.Concat(server.Bodies));
+            Assert.DoesNotContain(m, sent);
             Assert.DoesNotContain(m, stored);
         });
         // nor do the expected answers appear in any request as grader config
-        Assert.DoesNotContain("\"graders\"", string.Concat(server.Bodies));
+        Assert.DoesNotContain("\"graders\"", sent);
     }
 }
 

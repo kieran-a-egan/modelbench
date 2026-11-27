@@ -14,9 +14,11 @@ public sealed class DockerSandbox : ISandbox
     public const string DotnetImage = "modelbench-dotnet:3";
     /// <summary>Stdout kept from the container. The runners' OUTPUT_BUDGET / OutputBudget must keep the base64 frame under this.</summary>
     internal const int OutputCap = 1 << 20;
+    /// <summary>Upper bound on the stdout frame for a runner output budget: base64 of the budget, plus 32 KB for the frame's own fields and the nonce prefix.</summary>
+    internal static int FrameBytes(int outputBudget) => (outputBudget + 2) / 3 * 4 + 32 * 1024;
     /// <summary>Prefix of the error the runner gives a case it killed at its per-call deadline.</summary>
     internal const string CaseTimeoutPrefix = "case timed out";
-    private const int GraceMs = 5_000;
+    private const int GraceMs = 5_000, GracePerCallMs = 100;
 
     /// <summary>The only fields that ever enter the container (ADR 0002).</summary>
     public sealed record WireRequest(string Action, string Code, string EntryPoint, IReadOnlyList<JsonElement> Inputs, int Repetitions, int TimeoutMs, string Nonce);
@@ -28,13 +30,13 @@ public sealed class DockerSandbox : ISandbox
 
     /// <summary>
     /// Run: TimeoutMs per call, for every repetition of every input. Compile/Inspect: TimeoutMs once.
-    /// Plus 5 s grace for container start-up. The runner kills a case at its own deadline (TimeoutMs x repetitions) and that case alone
+    /// Plus a grace of 5 s + 100 ms per call (container start-up, and per-case process start and reap outside the case deadline). The runner kills a case at its own deadline (TimeoutMs x repetitions) and that case alone
     /// errors; this host limit is the backstop (TimedOut) for a container that exceeds its whole wall clock, and nothing is trusted to self-limit.
     /// </summary>
     public static long WallClockMs(SandboxRequest r)
     {
         long calls = r.Action == SandboxAction.Run ? (long)Math.Max(1, r.Repetitions) * Math.Max(1, r.Inputs.Count) : 1;
-        return (long)r.TimeoutMs * calls + GraceMs;
+        return (long)r.TimeoutMs * calls + GraceMs + GracePerCallMs * calls;
     }
 
     public async Task<SandboxResult> ExecuteAsync(SandboxRequest request, CancellationToken ct)
