@@ -37,6 +37,20 @@ public class MetricCalculatorTests
         Assert.All(new[] { "energy_kwh", "energy_cost_usd" }, n => Assert.Equal(Provenance.Estimated, Get(ms, n).Provenance));
     }
 
+    [Fact] public void EnergyBillsInferenceTimeOnlyAndSharesTheMachineAcrossConcurrentAttempts()
+    {
+        var r = Resp(new Usage(1, 1, null), null, TimeSpan.FromSeconds(1));
+        double Kwh(int concurrency) => Get(MetricCalculator.Compute([r], TimeSpan.FromSeconds(30), null, new EnergyProfile(360, 0.5m), inferenceTime: TimeSpan.FromSeconds(2), concurrency: concurrency), "energy_kwh").Value!.Value;
+        Assert.Equal(0.0002, Kwh(1), 9); // 2 s of inference; the other 28 s of back-off is not billed
+        Assert.Equal(Kwh(1) / 4, Kwh(4), 12);
+    }
+
+    [Fact] public void ReasoningTokensExceedingOutputMakeCostUnavailableNotNegative()
+    {
+        var ms = MetricCalculator.Compute([Resp(new Usage(10, 5, 8), null, TimeSpan.FromSeconds(1))], TimeSpan.FromSeconds(1), new Pricing(1, 1), null);
+        Assert.Equal(Provenance.Unavailable, Get(ms, "cost_usd").Provenance);
+    }
+
     [Fact] public void MissingTelemetryIsUnavailableNeverEstimated()
     {
         var ms = MetricCalculator.Compute([Resp(Usage.Unknown, null, TimeSpan.FromSeconds(1))], TimeSpan.FromSeconds(1), new Pricing(1, 1), null);

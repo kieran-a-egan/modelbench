@@ -232,6 +232,38 @@ public class ConcurrencyAndResumeTests
         static FakeReply SlowError() { Thread.Sleep(300); return FakeReply.Error(500); }
     }
 
+    [Fact] public async Task ALoneAttemptIsNotSharedEvenWhenTheRunAllowsMoreWorkers()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        await using var server = await FakeServer.StartAsync(Slow(400));
+        var suite = TestKit.MakeSuite(db, 1);
+        var model = TestKit.Model(server.BaseUrl);
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 30, new RetryPolicy(), null, concurrency: 8);
+        await Exec(model).ExecuteAsync(db, run.Id, default);
+        var kwh = db.Attempts.AsNoTracking().Include(x => x.Metrics).Single(x => x.RunId == run.Id).Metrics.Single(m => m.Name == MetricNames.EnergyKwh).Value!.Value;
+        Assert.True(kwh * 1000 / 300 * 3600 >= 0.35, $"billed {kwh * 1000 / 300 * 3600:0.000} s of a 0.4 s lone inference: it must not be divided by the 8 configured workers");
+    }
+
+    [Fact] public async Task ATimeoutDuringBackOffBillsOnlyTheFailedTry()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        // The only try fails fast (retryable 500); the back-off (2.5-5 s) outlives the 1 s attempt timeout.
+        await using var server = await FakeServer.StartAsync((_, _) => FakeReply.Error(500));
+        var suite = TestKit.MakeSuite(db, 1);
+        var model = TestKit.Model(server.BaseUrl);
+        var run = RunService.CreateRun(db, suite.Id, model, ExecutionMode.SingleTurn, 1, 1, new RetryPolicy(1, 5000, 5000), null, concurrency: 8);
+        await Exec(model).ExecuteAsync(db, run.Id, default);
+
+        var a = db.Attempts.AsNoTracking().Include(x => x.Metrics).Single(x => x.RunId == run.Id);
+        Assert.Equal(AttemptOutcome.Timeout, a.Outcome);
+        var kwh = a.Metrics.Single(m => m.Name == MetricNames.EnergyKwh).Value!.Value;
+        var billedSeconds = kwh * 1000 / 300 * 3600; // 300 W, one attempt in flight
+        Assert.InRange(billedSeconds, 0.0, 0.5); // the failed try only: neither the back-off nor the try twice (1 s+)
+        Assert.True(billedSeconds > 0, "the failed try itself is billed");
+    }
+
     [Fact] public async Task UnfinishedEpisodeReportsUsageUnavailableNotMeasuredZero()
     {
         using var dir = new TempDir();

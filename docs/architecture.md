@@ -192,7 +192,7 @@ Per attempt, summed over the episode's model calls:
 - `duration_ms` of an attempt that replaced a deleted one (resume) covers only the replacement, not the earlier attempt. Per-request telemetry persistence (keeping the usage of failed tries and replaced attempts) is deferred; until then incomplete usage is reported Unavailable.
 - When usage is incomplete (the attempt retried, or it replaced a deleted attempt via resume), the failed requests' usage was never reported, so tokens, `model_calls` and `cost_usd` are Unavailable rather than understated. Coverage (N/M) shows the gap, and cost per success is then not reported.
 - `cost_usd`: Calculated from tokens × `Pricing` (reasoning tokens billed at the `Reasoning` rate if set, else at the output rate). Unavailable when tokens or pricing are missing.
-- `energy_kwh` and `energy_cost_usd`: Estimated from duration × `Energy.Watts` and the price.
+- `energy_kwh` and `energy_cost_usd`: Estimated from inference time (excluding retry back-off) × `Energy.Watts` ÷ the attempts in flight (sampled at the attempt's start and end, itself included; concurrent attempts share the machine's watts) and the price.
 
 Run level:
 - **end-to-end rate**: passes / (graded + timeouts). Timeouts are the model's own budget exhaustion, so they count as failures. This ranks the leaderboard, complete runs (no infra errors or cancellations) first (MB-001); runs with completion below 1 are listed after, marked, and never outrank a complete run

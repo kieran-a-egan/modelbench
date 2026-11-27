@@ -71,10 +71,11 @@ public static class Export
                     s.Attempts, s.Graded, s.Passed, s.InfraErrors, s.Timeouts, s.Cancelled, s.EndToEndRate, s.Completion, s.Authoritative, s.PassRate, s.MeanScore, s.Consistency, s.CostPerSuccess, s.GradingVersion);
                 break;
             case "attempts":
-                Row(w, [.. new[] { "attempt_id", "run_id", "task_index", "family", "category", "complexity", "repeat", "outcome", "score", "retries", "error", "final_text" }, .. MetricColumns]);
+                Row(w, [.. new[] { "attempt_id", "run_id", "task_index", "family", "category", "complexity", "repeat", "outcome", "score", "retries", "error", "final_text" }, .. MetricColumns, .. MetricColumns.Select(n => n + "_provenance")]);
                 foreach (var a in run.Attempts)
                     Row(w, [a.Id, run.Id, a.Task!.Index, a.Task.FamilyId, a.Task.Category, a.Task.Complexity, a.RepeatIndex, a.Outcome, a.Score, a.Retries, a.ErrorMessage, a.FinalText,
-                        .. MetricColumns.Select(n => (object?)a.Metrics.FirstOrDefault(m => m.Name == n)?.Value)]);
+                        .. MetricColumns.Select(n => (object?)a.Metrics.FirstOrDefault(m => m.Name == n)?.Value),
+                        .. MetricColumns.Select(n => (object?)a.Metrics.FirstOrDefault(m => m.Name == n)?.Provenance)]);
                 break;
             case "assertions":
                 Row(w, "attempt_id", "task_index", "repeat", "grader", "name", "expected", "actual", "score", "weight", "required", "passed", "diagnostic");
@@ -103,14 +104,18 @@ public static class Export
 
     private static void Row(TextWriter w, params object?[] cells) => w.Write(string.Join(",", cells.Select(Cell)) + "\r\n");
 
-    /// <summary>RFC 4180 quoting; text starting with = + - @ tab or CR gets a leading single quote so spreadsheets do not run it as a formula.</summary>
+    // Ends in a digit so NaN/Infinity words are not exempt; styles exclude whitespace and thousands separators.
+    private static bool IsPlainNumber(string s) => char.IsAsciiDigit(s[^1])
+        && double.TryParse(s, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint | NumberStyles.AllowExponent, CultureInfo.InvariantCulture, out _);
+
+    /// <summary>RFC 4180 quoting; text starting with = + - @ tab or CR (unless it is a plain number such as -5) gets a leading single quote so spreadsheets do not run it as a formula.</summary>
     public static string Cell(object? v)
     {
         switch (v)
         {
             case null: return "";
             case string s:
-                if (s.Length > 0 && "=+-@\t\r".Contains(s[0])) s = "'" + s;
+                if (s.Length > 0 && "=+-@\t\r".Contains(s[0]) && !IsPlainNumber(s)) s = "'" + s;
                 return s.IndexOfAny([',', '"', '\r', '\n']) >= 0 ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
             case double d: return d.ToString("R", CultureInfo.InvariantCulture);
             case bool b: return b ? "true" : "false";

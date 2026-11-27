@@ -26,7 +26,7 @@
     <h2>@g.SuiteName <small class="muted">hash @g.SuiteHash[..12], grading v@g.GradingVersion</small></h2>
     @if (View == "breakdown")
     {
-        var b = breakdowns[g.SuiteHash];
+        var b = breakdowns[(g.SuiteHash, g.GradingVersion)];
         @foreach (var (title, m) in new[] { ("Category", b.ByCategory), ("Complexity", b.ByComplexity) })
         {
             <div class="scroll">
@@ -70,12 +70,12 @@
     private string AllQ => All ? "&all=true" : "";
     private ExecutionMode CurrentMode => Enum.TryParse<ExecutionMode>(Mode, out var m) ? m : ExecutionMode.SingleTurn;
     private List<LeaderboardGroup> groups = [];
-    private Dictionary<string, BreakdownResult> breakdowns = [];
+    private Dictionary<(string, int), BreakdownResult> breakdowns = [];
 
     protected override void OnParametersSet()
     {
         using var db = Open();
         groups = Reports.Leaderboard(db, CurrentMode, null, All && View != "breakdown");
-        breakdowns = View == "breakdown" ? groups.Select(g => g.SuiteHash).Distinct().ToDictionary(h => h, h => Reports.Breakdown(db, CurrentMode, h)) : []; // one hash can have several grading versions
+        breakdowns = View == "breakdown" ? groups.ToDictionary(g => (g.SuiteHash, g.GradingVersion), g => Reports.Breakdown(db, CurrentMode, g.SuiteHash, g.GradingVersion)) : [];
     }
 }

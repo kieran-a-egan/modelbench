@@ -132,10 +132,10 @@ public static class Reports
     }
 
     /// <summary>Model x category and model x complexity pass-rate matrices over the latest completed run per model.</summary>
-    public static BreakdownResult Breakdown(BenchDb db, ExecutionMode mode, string suiteHash)
+    public static BreakdownResult Breakdown(BenchDb db, ExecutionMode mode, string suiteHash, int gradingVersion)
     {
-        // Groups is filtered to one hash, so groups differ only by grading version: use the newest methodology.
-        var rows = Groups(db, mode, suiteHash, false).MaxBy(g => g.GradingVersion)?.Rows.ToList() ?? [];
+        // Comparable only within one hash AND one grading methodology, like the leaderboard groups.
+        var rows = Groups(db, mode, suiteHash, false).FirstOrDefault(g => g.GradingVersion == gradingVersion)?.Rows.ToList() ?? [];
         Matrix Build(Func<RunSummary, IReadOnlyList<Slice>> pick)
         {
             var cols = rows.SelectMany(r => pick(r).Select(s => s.Key)).Distinct().Order(StringComparer.Ordinal).ToList();

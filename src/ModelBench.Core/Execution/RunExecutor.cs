@@ -116,7 +116,10 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
                 await foreach (var (task, repeat) in queue.Reader.ReadAllAsync(CancellationToken.None))
                 {
                     if (work.IsCancellationRequested) break;
-                    var attempt = await RunAttemptAsync(run, task, repeat, policy, prior.ContainsKey((task.Id, repeat)), work.Token);
+                    Interlocked.Increment(ref _inFlight);
+                    Attempt attempt;
+                    try { attempt = await RunAttemptAsync(run, task, repeat, policy, prior.ContainsKey((task.Id, repeat)), work.Token); }
+                    finally { Interlocked.Decrement(ref _inFlight); }
                     attempt.Retries += prior.GetValueOrDefault((task.Id, repeat));
                     if (!await WriteFencedAsync(wdb, runId, owner, () => { wdb.Attempts.Add(attempt); return wdb.SaveChangesAsync(CancellationToken.None); }))
                     {
@@ -215,6 +218,8 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         catch (OperationCanceledException) { }
     }
 
+    private int _inFlight; // attempts currently executing in this executor (energy sharing)
+
     private async Task<Attempt> RunAttemptAsync(Run run, TaskInstance task, int repeat, RetryPolicy policy, bool replacesPrior, CancellationToken ct)
     {
         var attempt = new Attempt { RunId = run.Id, TaskId = task.Id, RepeatIndex = repeat, StartedAt = DateTimeOffset.UtcNow };
@@ -223,16 +228,23 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         EpisodeResult? episode = null;
         TimeSpan? inference = null; // first try to the end of the successful episode, so retries and back-off count (MB-009)
         var sw = Stopwatch.StartNew();
+        TimeSpan busy = TimeSpan.Zero, tryStart = TimeSpan.Zero; // time spent inside tries, excluding retry back-off (energy)
+        var inTry = true; // false while backing off, so a timeout during back-off bills neither the back-off nor the failed try twice
+        var sharersAtStart = Volatile.Read(ref _inFlight);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(run.TimeoutSeconds));
         try
         {
             while (true)
             {
-                try { episode = await EpisodeRunner.RunAsync(run.Mode, prompt, hidden, FamilyRegistry.Get(task.FamilyId), provider, cts.Token); inference = sw.Elapsed; break; }
+                try { episode = await EpisodeRunner.RunAsync(run.Mode, prompt, hidden, FamilyRegistry.Get(task.FamilyId), provider, cts.Token); inference = sw.Elapsed; busy += inference.Value - tryStart; break; }
                 catch (InfraException ex) when (ex.Retryable && attempt.Retries < policy.MaxRetries)
                 {
+                    busy += sw.Elapsed - tryStart;
+                    inTry = false;
                     await Task.Delay(policy.Delay(attempt.Retries++, run.Id, task.Id, repeat, (ex as InfraException)?.RetryAfter), cts.Token);
+                    tryStart = sw.Elapsed;
+                    inTry = true;
                 }
             }
             // Saved before grading, so a grader failure still keeps the paid-for transcript.
@@ -269,7 +281,11 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         attempt.CompletedAt = DateTimeOffset.UtcNow;
         // A failed try, or a replaced earlier attempt, consumed usage nobody recorded: report usage Unavailable, never a partial sum.
         attempt.Metrics.AddRange(MetricCalculator.Compute(episode?.Responses ?? [], inference ?? sw.Elapsed, model.Pricing, model.Energy,
-            usageComplete: episode is not null && attempt.Retries == 0 && !replacesPrior));
+            usageComplete: episode is not null && attempt.Retries == 0 && !replacesPrior,
+            inferenceTime: episode is null && inTry ? busy + (sw.Elapsed - tryStart) : busy,
+            // Attempts actually in flight (sampled at start and end, this one included), not the configured worker count,
+            // so a run's tail, a lone resumed attempt or concurrency above the task count is not under-billed.
+            concurrency: Math.Max(1, (sharersAtStart + Volatile.Read(ref _inFlight) + 1) / 2)));
         return attempt;
     }
 }

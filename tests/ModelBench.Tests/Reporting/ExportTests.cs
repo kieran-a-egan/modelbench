@@ -15,8 +15,13 @@ public class ExportTests
     [InlineData("say \"hi\"", "\"say \"\"hi\"\"\"")]
     [InlineData("line1\nline2", "\"line1\nline2\"")]
     [InlineData("=SUM(A1)", "'=SUM(A1)")]
-    [InlineData("+1", "'+1")]
-    [InlineData("-1", "'-1")]
+    [InlineData("+x", "'+x")]
+    [InlineData("-x", "'-x")]
+    [InlineData("-5", "-5")]
+    [InlineData("-0.25", "-0.25")]
+    [InlineData("-1e3", "-1e3")]
+    [InlineData("-Infinity", "'-Infinity")]
+    [InlineData("-5 ", "'-5 ")]
     [InlineData("@x", "'@x")]
     [InlineData("\tx", "'\tx")]
     [InlineData("=a,b", "\"'=a,b\"")]
@@ -71,6 +76,11 @@ public class ExportTests
         Assert.DoesNotContain(",=cmd", attempts);
         Assert.Contains("\"has,comma \"\"and quote\"\"\"", attempts);
         Assert.Contains("\r\n", attempts);
+        var lines = attempts.Split("\r\n");
+        var cols = lines[0].Split(',');
+        Assert.Equal(cols.Length, lines[1].Split(',').Length);
+        Assert.Contains("cost_usd_provenance", cols);
+        Assert.Equal("Calculated", lines[1].Split(',')[Array.IndexOf(cols, "cost_usd_provenance")]);
         Assert.Equal(4, File.ReadAllLines(paths[2]).Length); // header + one assertion per graded attempt
     }
 }
