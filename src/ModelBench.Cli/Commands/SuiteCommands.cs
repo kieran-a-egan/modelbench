@@ -83,9 +83,13 @@ internal static class SuiteCommands
     {
         var fam = FamilyRegistry.All.Where(f => text == f.Id || text.StartsWith(f.Id + ":", StringComparison.Ordinal)).MaxBy(f => f.Id.Length)
             ?? throw new ArgumentException($"unknown family in '{text}' (known: {string.Join(", ", FamilyRegistry.All.Select(f => f.Id))})");
-        var parts = text[fam.Id.Length..].Split(':', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length > 2) throw new ArgumentException($"'{text}': expected id[:complexity[:count]]");
+        var rest = text[fam.Id.Length..];
+        var parts = rest.Length == 0 ? [] : rest[1..].Split(':');
+        if (parts.Length > 2 || parts.Any(string.IsNullOrEmpty)) throw new ArgumentException($"'{text}': expected id[:complexity[:count]]");
         var count = parts.Length == 2 ? ParseInt(parts[1], "count") : 5;
+        // Static and repo families carry their own complexity: one entry, like the web form.
+        if (fam.Id.StartsWith("static:") || fam.Id.StartsWith("repo:"))
+            return [new FamilySpec(fam.Id, parts.Length == 0 || parts[0] == "all" ? Complexity.Min : ParseInt(parts[0], "complexity"), count)];
         if (parts.Length == 0 || parts[0] == "all")
             return Enumerable.Range(Complexity.Min, Complexity.Max).Select(c => new FamilySpec(fam.Id, c, count));
         return [new FamilySpec(fam.Id, ParseInt(parts[0], "complexity"), count)];

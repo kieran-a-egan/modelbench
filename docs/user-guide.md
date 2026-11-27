@@ -5,7 +5,7 @@ Commands are shown as `modelbench ...`. From the repository use `dotnet run --pr
 - `--db <path>`: the SQLite database. Default: the `MODELBENCH_DB` environment variable, then `~/.modelbench/modelbench.db`.
 - `--models <path>`: the models file. Default: the `MODELBENCH_MODELS` environment variable, then `./models.json`, then `~/.modelbench/models.json`.
 
-Run, suite and attempt ids can be abbreviated to any unique prefix. Errors print `error: ...` and exit with code 1.
+Run, suite and attempt ids can be abbreviated to any unique prefix. Errors, including a malformed models file, unreadable or unwritable paths, HTTP and database failures, print `error: ...` and exit with code 1 (130 when cancelled). A model whose `energy` block lacks a numeric `watts` or `pricePerKwh` is refused with a message naming the model and field, and the web editor refuses to save such a file.
 
 ## models.json reference
 
@@ -93,7 +93,7 @@ modelbench suite show <suite>
 modelbench suite verify <suite>
 ```
 
-`--family id[:complexity[:count]]` is repeatable. Complexity is 1 to 5 or `all` (one entry per level); the default is all levels. Count defaults to 5. `--seed` is the master seed. Static and repository families use ids `static:<name>` and `repo:<name>`. `suite verify` regenerates the suite from its stored spec and compares every hash.
+`--family id[:complexity[:count]]` is repeatable. Complexity is 1 to 5 or `all` (one entry per level); the default is all levels. Count defaults to 5. `--seed` is the master seed. Static and repository families use ids `static:<name>` and `repo:<name>`; they carry their own complexity, so they always produce a single entry (like the web form). Malformed specs such as `id::3` are errors. `suite verify` regenerates the suite from its stored spec and compares every hash.
 
 ### Runs
 
@@ -106,7 +106,7 @@ modelbench run resume <run> [--retry-infra]
 modelbench run regrade <run> [--check]
 ```
 
-`run start` options: `--mode SingleTurn|ToolAssisted|Agentic|Manual` (default SingleTurn), `--repeats N` (attempts per task), `--timeout SECONDS` (per attempt, default 300), `--concurrency N`, `--max-retries N` (retries per attempt on retryable infrastructure errors), `--label TEXT`. A run executes only the suite tasks whose mode matches the run mode, so a mixed suite is benchmarked with one run per mode. Ctrl+C cancels cleanly and the run can be resumed. `run start` exits 0 only if the run completed.
+`run start` options: `--mode SingleTurn|ToolAssisted|Agentic|Manual` (default SingleTurn), `--repeats N` (attempts per task), `--timeout SECONDS` (per attempt, default 300), `--concurrency N`, `--max-retries N` (retries per attempt on retryable infrastructure errors), `--label TEXT`. A run executes only the suite tasks whose mode matches the run mode, so a mixed suite is benchmarked with one run per mode. Ctrl+C cancels cleanly and the run can be resumed. `run start` exits 0 only if the run completed. The model, provider and mode are checked before the run is created, so a refusal (an `api:manual` model with an automatic mode, or `--mode Manual` with any other model) leaves no run behind; the web Runs page does not offer manual models.
 
 `run cancel` asks the process executing the run (this or another one) to stop; it polls the flag every two seconds.
 

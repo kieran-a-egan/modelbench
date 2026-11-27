@@ -109,7 +109,7 @@ public sealed partial class ModelCatalog
             ContextWindow: m["contextWindow"]?.GetValue<int>(),
             MaxTokens: m["maxTokens"]?.GetValue<int>(),
             Pricing: cost is null ? null : new Pricing(cost["input"]?.GetValue<decimal>() ?? 0, cost["output"]?.GetValue<decimal>() ?? 0, cost["reasoning"]?.GetValue<decimal>()),
-            Energy: energy is null ? null : new EnergyProfile(energy["watts"]!.GetValue<double>(), energy["pricePerKwh"]!.GetValue<decimal>()),
+            Energy: energy is null ? null : new EnergyProfile(EnergyField<double>(energy, "watts", reference), EnergyField<decimal>(energy, "pricePerKwh", reference)),
             Variant: variant,
             Sampling: Clone(m["samplingParams"]), VariantSettings: variantSettings, Compat: Clone(m["compat"]), Extra: Clone(m["extra"]));
     }
@@ -120,6 +120,10 @@ public sealed partial class ModelCatalog
 
     private static IEnumerable<JsonObject> Models(JsonObject provider, string id)
         => (provider["models"] as JsonArray ?? throw new InvalidOperationException($"provider '{id}' has no models array")).Select(n => n!.AsObject());
+
+    private static T EnergyField<T>(JsonObject energy, string field, string reference)
+        => energy[field] is JsonValue v && v.TryGetValue<T>(out var x) ? x
+            : throw new InvalidOperationException($"'{reference}': provider energy.{field} is missing or not a number");
 
     private static JsonObject Clone(JsonNode? n) => n is JsonObject o ? (JsonObject)o.DeepClone() : [];
 
@@ -139,5 +143,8 @@ public sealed partial class ModelCatalog
             : throw new InvalidOperationException($"provider '{provider}': api '{(string?)api}' is not supported. ModelBench runs local models only: {string.Join(", ", ApiKinds.Keys)}");
 
     private static string Substitute(string s) => EnvPattern().Replace(s, m =>
-        Environment.GetEnvironmentVariable(m.Groups[1].Value) ?? throw new InvalidOperationException($"environment variable {m.Groups[1].Value} is not set"));
+        Environment.GetEnvironmentVariable(m.Groups[1].Value) ?? throw new MissingEnvironmentVariableException(m.Groups[1].Value));
 }
+
+/// <summary>An {env:NAME} reference whose variable is unset: an environment problem, not a malformed models file.</summary>
+public sealed class MissingEnvironmentVariableException(string name) : InvalidOperationException($"environment variable {name} is not set");
