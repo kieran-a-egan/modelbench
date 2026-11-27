@@ -2,6 +2,33 @@
 
 Manual and live checks backing `docs/acceptance-criteria.md`. Automated evidence is the test suite.
 
+## 2026-11-26: process-per-case sandbox (#3) and code-generation spec variants (#4)
+
+**Environment:** Windows 11, .NET 10, Docker running. Branch `feat/issue-3-4-isolation-spec-templates` on top of `fix/review-mb-001-010` (PR #5). Sandbox images rebuilt as `modelbench-python:2` and `modelbench-dotnet:2`.
+
+### Automated
+- `dotnet build -warnaserror`: 0 warnings, 0 errors. `dotnet test`: **496 passed, 0 failed, 0 skipped** (490 before; Docker-backed tests ran for real).
+- `modelbench selftest` (real DockerSandbox): **passed, 1211 checks**.
+
+| Issue | Change | Evidence |
+|---|---|---|
+| #3 candidate code shares the runner's process | Every case runs in a fresh child process (Python `fork`, C# `Runner.dll --case`) whose only writable descriptor is its own result pipe. The runner (PID 1, not dumpable) checks each child's exit status, assigns indices, kills and reaps leftovers and empties `/tmp`, `/dev/shm`, `/dev/mqueue` and SysV IPC between cases, and is the only frame writer. The host accepts a frame only with exit code 0 | `RunnerIntegrityTests` (8, real container): a Python case holding the real nonce writes forged frames to every fd and `/proc/1/fd/1` and the host still sees only the runner's frame; `/proc/1/fd/1`, `/proc/1/mem` and `/proc/1/environ` are denied; module globals, statics, builtins, environment variables, `/tmp` and leftover processes never reach the next case; `os._exit`, `sys.exit`, self-`SIGKILL`, `Environment.Exit` and a stack overflow fail only their own case; `ParseFrame` rejects a non-zero exit. `SandboxAdversarialTests.ForkBomb`, `GiantOutput`, `MemoryBomb` and `ForgedFrameIgnored` updated to the new containment |
+| #4 limited prompt diversity | 12 new task variants with their own spec, reference solver, independent checker, reference, wrong and (performance tasks) quadratic answers; `code-generation` v4. Capacity is declared (`IBenchmarkFamily.Capacity`: 12 / 22 / 10 at complexity 1 / 2 / 3–5, up from 6 / 10 / 4) and a larger count is refused up front | `CodeFamilyTests.CapacityIsExplicitAndExactlyThatManyDistinctPromptsGenerateReproducibly`, `EveryTaskVariantIsReachedAndValidAtEveryComplexityItServes`, `GoldenSuiteHashPinsTheGenerator`, `CodeTaskVariantSandboxTests` (every reference passes and every wrong answer fails in the real sandbox), `PerformanceBudgetCalibrationTests` (every budget, including the 6 new ones, separates the reference from the quadratic answer) |
+
+### Sandbox start-up cost (#3)
+Single `docker run` of a 33-case `run` request, median of 5, same flags as `DockerSandbox`:
+
+| Image | Before (`:1`) | After (`:2`) |
+|---|---|---|
+| Python | 457 ms | 449 ms |
+| C# | 1106 ms | 2627 ms (about 45 ms per case process) |
+
+### Live model: Strata Desktop `inkling-2-mini-sq-15@low` (scratch database)
+- Suite `variants` (seed 26): `code-generation` complexity 2 ×22 and complexity 4 ×10, so 32 distinct prompts, the full capacity at both complexities. The old pool allowed 10 and 4. Hash `d2bb8c2fb858`; `suite verify` regenerates every task to its stored hash.
+- SingleTurn: **31/32 passed** (end-to-end 0.969, completion 1.000). C# and Python both ran through the per-case sandbox. Complexity 2: 21/22. Complexity 4: 10/10.
+- The one failure is a genuine model error on the new `roman-to-integer` variant: the answer adds every numeral instead of subtracting before a larger one (`IV` → 6, `CDXLIV` → 644). Each failed assertion shows its expected and actual values.
+- `run regrade --check`: 32 attempts, 0 differences (exit 0).
+
 ## 2026-11-26: review remediation, issue #1 (MB-001 to MB-010), grading methodology v2
 
 **Environment:** Windows 11, .NET 10, Docker running, sandbox images built. Branch `fix/review-mb-001-010` from `main` 2597e08.

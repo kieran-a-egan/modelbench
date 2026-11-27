@@ -257,6 +257,10 @@ Code families (code-generation, debugging) run candidate Python and C# in Docker
 - 256 MB memory (no swap), 1 CPU, at most 64 processes,
 - a host-enforced wall-clock limit (the case timeout plus 5 s grace, then `docker kill`) and a 1 MB output cap.
 
+Inside the container each test case runs in its own fresh process. A crash, `exit` or stack overflow fails only that case, and nothing a case leaves behind (globals, processes, files in `/tmp` or `/dev/shm`, IPC objects) reaches the next one. C# pays about 45 ms per case for this. After updating ModelBench, run `modelbench sandbox build` again: the image tags change whenever the runner does (currently `:2`).
+
+A suite can hold at most as many `code-generation` tasks per complexity as there are distinct prompts: 12 at complexity 1, 22 at complexity 2 and 10 at complexities 3–5. Ask for more and generation stops with the capacity; it never repeats a prompt. Capacity is per suite: complexity 1 shares its prompts with complexity 2, and complexities 3, 4 and 5 share the same 10 (4 and 5 are identical), so entries at those complexities draw from one pool and a suite asking for more than the pool fails during generation.
+
 Test inputs go in; expected outputs never do. The container returns outputs and the host compares them. Performance budgets use the host's clock and include container start-up, so they depend on machine load. They are therefore reported (the `within-budget` assertion) but not scored: a correct but slow solution passes, and only correct output can be within budget. If Docker is missing or the images are not built, code attempts become `InfraError` (and are excluded from scores) rather than failing the model. Non-code families do not need Docker.
 
 ## Reproducibility

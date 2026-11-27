@@ -23,6 +23,9 @@ public static class SuiteGenerator
             var fam = FamilyRegistry.Get(fs.Family);
             if (fs.Complexity is < Complexity.Min or > Complexity.Max) throw new ArgumentException($"complexity {fs.Complexity} outside 1..5");
             if (fs.Count < 1) throw new ArgumentException($"count for {fs.Family} must be >= 1");
+            if (fam.Capacity(fs.Complexity) is int capacity && fs.Count > capacity)
+                throw new InvalidOperationException($"{fam.Id} complexity {fs.Complexity} has {capacity} distinct prompts (its capacity); "
+                    + $"cannot produce {fs.Count}. Lower the count or split it across complexities");
             recorded.Add(fs with { Version = fam.Version });
             for (var i = 0; i < fs.Count; i++, index++)
             {
@@ -39,9 +42,10 @@ public static class SuiteGenerator
                     generated = fam.Generate(new Rng(seed), fs.Complexity, i);
                     prompt = JsonUtil.Serialize(generated.Prompt);
                     if (fam is DefinitionFamily || seenPrompts.Add(prompt)) break;
-                    if (++attempt == 50)
+                    // Random picks hit a small pool's last free prompt slowly (22 prompts: 1 in 10 suites would miss it in 50 tries).
+                    if (++attempt == 1000)
                         throw new InvalidOperationException($"{fam.Id} complexity {fs.Complexity} cannot produce {fs.Count} distinct tasks: "
-                            + $"its visible prompts ran out after {i} (the family's capacity at this complexity); lower the count or split it across complexities");
+                            + $"its visible prompts ran out after {i} (the family's capacity at this complexity), or they are already used by an earlier entry of the same family in this suite (other complexities share prompts); lower the count or split it across complexities");
                 }
                 var check = fam.Validate(generated);
                 if (!check.Ok)

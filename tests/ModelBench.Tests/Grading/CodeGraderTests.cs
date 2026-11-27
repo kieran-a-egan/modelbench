@@ -132,7 +132,7 @@ public class CodeGraderTests
         var cfg = new { language = "python", entryPoint = "f", cases = Cases(([1], 2)) };
         var crash = await Grade("unit-tests", cfg, "import os\nos._exit(3)\ndef f(x):\n    return x\n", sb);
         Assert.False(crash.Single().Passed);
-        Assert.Contains("crashed", crash.Single().Diagnostic);
+        Assert.Contains("case process exited with status 3", crash.Single().Diagnostic); // module code runs in each case's process
         var hang = await Grade("unit-tests", cfg, "def f(x):\n    while True:\n        pass\n", sb);
         Assert.Equal("timed out", hang.Single().Diagnostic);
     }
