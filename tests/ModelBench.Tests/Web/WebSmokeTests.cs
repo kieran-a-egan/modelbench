@@ -139,6 +139,14 @@ public class WebSmokeTests(WebFixture fx) : IClassFixture<WebFixture>
         Assert.Equal(good, File.ReadAllText(dir.File("models.json")));
     }
 
+    [Fact] public void ModelsFileSavesWhenAnEnvReferencedVariableIsUnset()
+    {
+        using var dir = new TempDir();
+        var json = TestKit.ModelsJson("http://127.0.0.1:9/v1", "{env:MODELBENCH_TEST_UNSET_VAR}");
+        File.WriteAllText(dir.File("models.json"), json);
+        Assert.Null(new ModelsFile(dir.File("models.json")).Save(json.Replace("\"watts\":300,", "\"watts\":250,")));
+    }
+
     [Fact] public void ModelsFileRestoresMaskedSecretsOnSave()
     {
         using var dir = new TempDir();

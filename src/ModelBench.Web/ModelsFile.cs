@@ -53,7 +53,9 @@ public sealed class ModelsFile(string? configuredPath)
             }
             var json = root.ToJsonString(Indented);
             var catalog = ModelCatalog.Parse(json);
-            foreach (var e in catalog.List()) catalog.Resolve(e.Ref); // validates providers, models and energy; non-local apis are skipped and shown on the page
+            foreach (var e in catalog.List())
+                try { catalog.Resolve(e.Ref); } // validates providers, models and energy; non-local apis are skipped and shown on the page
+                catch (MissingEnvironmentVariableException) { } // the file is valid; the variable is the host's business, so it must not block saving other edits
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
             File.WriteAllText(Path, json);
             return null;

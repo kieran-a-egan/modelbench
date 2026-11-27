@@ -143,5 +143,8 @@ public sealed partial class ModelCatalog
             : throw new InvalidOperationException($"provider '{provider}': api '{(string?)api}' is not supported. ModelBench runs local models only: {string.Join(", ", ApiKinds.Keys)}");
 
     private static string Substitute(string s) => EnvPattern().Replace(s, m =>
-        Environment.GetEnvironmentVariable(m.Groups[1].Value) ?? throw new InvalidOperationException($"environment variable {m.Groups[1].Value} is not set"));
+        Environment.GetEnvironmentVariable(m.Groups[1].Value) ?? throw new MissingEnvironmentVariableException(m.Groups[1].Value));
 }
+
+/// <summary>An {env:NAME} reference whose variable is unset: an environment problem, not a malformed models file.</summary>
+public sealed class MissingEnvironmentVariableException(string name) : InvalidOperationException($"environment variable {name} is not set");

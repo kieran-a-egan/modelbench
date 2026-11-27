@@ -128,7 +128,7 @@ public class ModelCatalogTests
     [Fact] public void MissingEnvVarIsAnError()
     {
         var cat = ModelCatalog.Parse("""{"providers":{"p":{"api":"manual","apiKey":"{env:MB_TEST_DEFINITELY_UNSET}","models":[{"id":"m"}]}}}""");
-        Assert.Throws<InvalidOperationException>(() => cat.Resolve("p/m"));
+        Assert.Throws<MissingEnvironmentVariableException>(() => cat.Resolve("p/m"));
     }
 
     [Fact] public void SnapshotHasNoSecrets()

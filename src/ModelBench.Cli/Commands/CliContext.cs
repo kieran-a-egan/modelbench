@@ -30,6 +30,11 @@ internal sealed class CliContext
             await pr.InvocationConfiguration.Error.WriteLineAsync("error: " + ConsoleSafe.Sanitize(ex.Message));
             return 1;
         }
+        catch (OperationCanceledException ex) when (ex.InnerException is TimeoutException)
+        {
+            await pr.InvocationConfiguration.Error.WriteLineAsync("error: timed out: " + ConsoleSafe.Sanitize(ex.InnerException.Message));
+            return 1;
+        }
         catch (OperationCanceledException)
         {
             await pr.InvocationConfiguration.Error.WriteLineAsync("error: cancelled");
