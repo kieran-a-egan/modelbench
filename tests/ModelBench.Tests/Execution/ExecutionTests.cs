@@ -263,49 +263,84 @@ public class RunExecutorTests
 
 public class HiddenIsolationTests
 {
+    private static readonly string[] SandboxGraders = ["ast", "compile", "performance", "unit-tests", "differential"];
+    private static readonly string[] Unmarked = ["language", "entryPoint", "kind", "type"]; // identifiers the graders parse
+
+    /// <summary>Prefixes every string leaf with a unique marker. Leaves under "args" are the test inputs, the only hidden data that legitimately enters the sandbox.</summary>
+    private static JsonNode? Mark(JsonNode? n, bool inArgs, string key, List<(string Marker, bool SandboxOk)> markers) => n switch
+    {
+        JsonObject o => new JsonObject(o.Select(p => KeyValuePair.Create(p.Key, Mark(p.Value, inArgs || p.Key == "args", p.Key, markers)))),
+        JsonArray a => new JsonArray(a.Select(x => Mark(x, inArgs, key, markers)).ToArray()),
+        JsonValue v when v.TryGetValue<string>(out var str) && !Unmarked.Contains(key) => Leaf(str, inArgs, markers),
+        _ => n?.DeepClone(),
+    };
+
+    private static JsonNode Leaf(string s, bool inArgs, List<(string, bool)> markers)
+    {
+        var marker = $"HIDDEN-MARKER-{markers.Count}-{Guid.NewGuid():N}";
+        markers.Add((marker, inArgs));
+        return marker + s;
+    }
+
     [Fact] public async Task HiddenMarkersNeverReachTheProviderOrTheStoredRequests()
     {
         using var dir = new TempDir();
         using var db = dir.OpenDb();
-        // every registered family at every complexity, one task each; one run per execution mode
-        var specs = FamilyRegistry.All.SelectMany(f => Enumerable.Range(Complexity.Min, Complexity.Max).Select(c => (f, c))).ToList();
-        var suites = specs.GroupBy(s => s.f.Mode).ToDictionary(g => g.Key, g => ModelBench.Core.Generation.SuiteGenerator.Generate(
-            new ModelBench.Core.Generation.SuiteSpec("iso-" + g.Key, 5, g.Select(s => new ModelBench.Core.Generation.FamilySpec(s.f.Id, s.c, 1)).ToList())));
-        var markers = new List<string>();
+        // Every registered family at every complexity, one task each. Families whose graders use the sandbox get a run (and recording sandbox) of
+        // their own, so each is shown to reach it; the rest share one run per execution mode.
+        var families = FamilyRegistry.All.SelectMany(f => Enumerable.Range(Complexity.Min, Complexity.Max - Complexity.Min + 1).Select(c => (f, c))).ToList();
+        var needsSandbox = families.GroupBy(x => x.f.Id).Where(g => g.Any(x => x.f.Generate(new ModelBench.Core.Generation.Rng(1), x.c, 0).Hidden.Graders.Any(gr => SandboxGraders.Contains(gr.Type)))).Select(g => g.Key).ToHashSet();
+        Assert.Contains("code-generation", needsSandbox);
+        var groups = families.GroupBy(x => needsSandbox.Contains(x.f.Id) ? x.f.Id : "mode-" + x.f.Mode).ToList();
+        var suites = groups.ToDictionary(g => g.Key, g => ModelBench.Core.Generation.SuiteGenerator.Generate(new ModelBench.Core.Generation.SuiteSpec("iso-" + g.Key, 5,
+            g.Select(x => new ModelBench.Core.Generation.FamilySpec(x.f.Id, x.c, 1)).ToList())));
+        var markers = new List<(string Marker, bool SandboxOk)>();
         foreach (var t in suites.Values.SelectMany(s => s.Tasks))
         {
-            var marker = $"HIDDEN-MARKER-{markers.Count}-{Guid.NewGuid():N}";
-            markers.Add(marker);
+            // Everything the model must not see: grader configs (expected values, test inputs, file contents), the environment and the reference.
             var hidden = JsonUtil.Deserialize<TaskHidden>(t.HiddenJson);
-            t.HiddenJson = JsonUtil.Serialize(hidden with { Reference = JsonUtil.Element(new { marker, original = hidden.Reference }) });
+            var reference = hidden.Reference is { } r ? JsonNode.Parse(r.GetRawText()) : null;
+            var marker = $"HIDDEN-MARKER-{markers.Count}-{Guid.NewGuid():N}";
+            markers.Add((marker, false));
+            t.HiddenJson = JsonUtil.Serialize(hidden with
+            {
+                Graders = hidden.Graders.Select(g => g with { Config = JsonUtil.Element(Mark(JsonNode.Parse(g.Config.GetRawText()), false, "", markers)!) }).ToList(),
+                Environment = hidden.Environment is { } e ? JsonUtil.Element(Mark(JsonNode.Parse(e.GetRawText()), false, "", markers)!) : null,
+                Reference = JsonUtil.Element(new { marker, original = Mark(reference, false, "", markers) }),
+            });
         }
         foreach (var s in suites.Values) ModelBench.Core.Generation.SuiteGenerator.Persist(db, s);
-        Assert.All(markers, m => Assert.Contains(m, string.Concat(db.Tasks.Select(t => t.HiddenJson)))); // the markers really are stored
+        Assert.All(markers, m => Assert.Contains(m.Marker, string.Concat(db.Tasks.Select(t => t.HiddenJson)))); // the markers really are stored
 
         // the reply carries an answer and a code block in both languages, so code graders reach the sandbox
         const string reply = "<answer>1</answer>\n```python\ndef f(x):\n    return x\n```\n```csharp\npublic static class S { public static int F(int x) => x; }\n```";
         await using var server = await FakeServer.StartAsync((_, _) => FakeReply.Text(reply));
         var model = TestKit.Model(server.BaseUrl);
-        var sandbox = new RecordingSandbox(new FakeSandbox(_ => Task.FromResult(FakeSandbox.Crashed)));
         var runs = new List<Guid>();
-        foreach (var (mode, suite) in suites)
+        var sandboxRequests = new List<string>();
+        foreach (var (key, suite) in suites)
         {
-            var run = RunService.CreateRun(db, suite.Id, model, mode, 1, 30, new RetryPolicy(), null);
+            var sandbox = new RecordingSandbox(new FakeSandbox(_ => Task.FromResult(FakeSandbox.Crashed)));
+            var run = RunService.CreateRun(db, suite.Id, model, groups.First(g => g.Key == key).First().f.Mode, 1, 30, new RetryPolicy(), null);
             runs.Add(run.Id);
             await new RunExecutor(ProviderFactory.Create(model), model, sandbox).ExecuteAsync(db, run.Id, default);
+            if (needsSandbox.Contains(key)) Assert.True(sandbox.Requests.Count > 0, $"{key} never reached the sandbox");
+            sandboxRequests.AddRange(sandbox.Requests.Select(r => DockerSandbox.BuildRequestJson(r, "n")));
         }
 
-        Assert.NotEmpty(server.Bodies);
-        Assert.NotEmpty(sandbox.Requests); // code families really exercised the sandbox path
-        var stored = string.Concat(db.Attempts.Where(a => runs.Contains(a.RunId)).Select(a => a.RawRequestsJson + a.TranscriptJson));
-        var sent = string.Concat(server.Bodies) + string.Concat(sandbox.Requests.Select(r => DockerSandbox.BuildRequestJson(r, "n")));
+        // Tool/agentic turns are not exercised: a tool result legitimately returns environment data to the model.
+        var sent = string.Concat(server.Bodies);
+        var stored = string.Concat(db.Attempts.Where(a => runs.Contains(a.RunId)).Select(a => a.RawRequestsJson + a.TranscriptJson)) + string.Concat(db.Tasks.Select(t => t.PromptJson));
+        // The sandbox legitimately receives the candidate code, entry point and the test inputs ("args"); never an expected value, reference or environment.
+        var toSandbox = string.Concat(sandboxRequests);
         Assert.All(markers, m =>
         {
-            Assert.DoesNotContain(m, sent);
-            Assert.DoesNotContain(m, stored);
+            Assert.DoesNotContain(m.Marker, sent);
+            Assert.DoesNotContain(m.Marker, stored);
+            if (!m.SandboxOk) Assert.DoesNotContain(m.Marker, toSandbox);
         });
         // nor do the expected answers appear in any request as grader config
-        Assert.DoesNotContain("\"graders\"", sent);
+        Assert.DoesNotContain("\"graders\"", sent + toSandbox);
     }
 }
 

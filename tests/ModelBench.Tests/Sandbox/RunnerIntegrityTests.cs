@@ -200,6 +200,8 @@ public class RunnerIntegrityTests
         Assert.Equal(sigIntAndTerm, int.Parse(Out(r, 2)) & sigIntAndTerm); // PID 1 ignores SIGINT and SIGTERM
     }
 
+    // Unlike Python, the .NET runtime installs its own handlers for SIGINT/SIGTERM, so /proc/1/status SigCgt/SigIgn is identical with and without
+    // the PosixSignalRegistration. The kill itself is meaningful here: without the registration the runner exits 130 (checked with a throwaway image).
     [Fact] public async Task CSharpCaseCannotSignalTheRunner()
     {
         var r = await Cs("""
