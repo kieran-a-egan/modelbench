@@ -29,55 +29,82 @@ public sealed class OpenAiCompletionsProvider(ResolvedModel model, HttpClient? h
         string? finish = null;
         TimeSpan? ttft = null;
         long? input = null, output = null, reasoningTokens = null;
+        var sawContent = false;
+        var sawDone = false;
 
-        await foreach (var data in SseReader.ReadDataAsync(stream, ct))
+        var sawData = false;
+        var ignored = new List<string>();
+
+        void Handle(string data)
         {
-            raw.AppendLine(data);
-            if (data.Trim() == "[DONE]") break;
             JsonDocument doc;
             try { doc = JsonDocument.Parse(data); }
             catch (JsonException ex) { throw new InfraException($"malformed stream chunk: {ex.Message}", retryable: false, inner: ex); }
             using (doc)
             {
                 var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return;
+                if (root.TryGetProperty("error", out var err) && err.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+                    throw new InfraException($"server error: {Str(err, "message") ?? (err.ValueKind == JsonValueKind.String ? err.GetString() : err.GetRawText())}", retryable: true);
                 if (root.TryGetProperty("usage", out var u) && u.ValueKind == JsonValueKind.Object)
                 {
                     input = Long(u, "prompt_tokens");
                     output = Long(u, "completion_tokens");
                     reasoningTokens = u.TryGetProperty("completion_tokens_details", out var d) && d.ValueKind == JsonValueKind.Object ? Long(d, "reasoning_tokens") : null;
                 }
-                if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
+                if (!root.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0 || choices[0].ValueKind != JsonValueKind.Object) return;
                 var choice = choices[0];
                 if (choice.TryGetProperty("finish_reason", out var fr) && fr.ValueKind == JsonValueKind.String) finish = fr.GetString();
-                if (!choice.TryGetProperty("delta", out var delta)) continue;
+                // "message" is the non-streaming shape (a server that ignored stream:true).
+                if (!(choice.TryGetProperty("delta", out var delta) || choice.TryGetProperty("message", out delta)) || delta.ValueKind != JsonValueKind.Object) return;
 
                 var sawToken = false;
                 if (Str(delta, "content") is { Length: > 0 } c) { text.Append(c); sawToken = true; }
                 if ((Str(delta, "reasoning_content") ?? Str(delta, "reasoning")) is { Length: > 0 } r) { reasoning.Append(r); sawToken = true; }
                 if (delta.TryGetProperty("tool_calls", out var tcs) && tcs.ValueKind == JsonValueKind.Array)
+                {
+                    var pos = 0;
                     foreach (var tc in tcs.EnumerateArray())
                     {
+                        var at = pos++;
+                        if (tc.ValueKind != JsonValueKind.Object) continue;
                         sawToken = true;
-                        var idx = tc.TryGetProperty("index", out var i) ? i.GetInt32() : 0;
+                        var idx = Long(tc, "index") is { } n ? (int)Math.Clamp(n, 0, int.MaxValue) : at;
                         if (!calls.TryGetValue(idx, out var acc)) calls[idx] = acc = ("", "", new StringBuilder());
                         var fn = tc.TryGetProperty("function", out var f) ? f : default;
                         calls[idx] = (Str(tc, "id") ?? acc.Id, (fn.ValueKind == JsonValueKind.Object ? Str(fn, "name") : null) ?? acc.Name, acc.Args);
                         if (fn.ValueKind == JsonValueKind.Object && Str(fn, "arguments") is { } a) acc.Args.Append(a);
                     }
-                if (sawToken) ttft ??= sw.Elapsed;
+                }
+                if (sawToken) { ttft ??= sw.Elapsed; sawContent = true; }
             }
         }
+
+        await foreach (var data in SseReader.ReadDataAsync(stream, ct, ignored))
+        {
+            raw.AppendLine(data);
+            if (data.Trim() == "[DONE]") { sawDone = true; break; }
+            sawData = true;
+            Handle(data);
+        }
+        if (!sawData && string.Join("\n", ignored).Trim() is { Length: > 0 } body)
+        {
+            raw.AppendLine(body);
+            Handle(body);
+        }
+        // Some local servers omit finish_reason but still send content and [DONE]. A stream with neither finish_reason nor [DONE]
+        // was cut off (server OOM, disconnect), as is one with no content at all; a complete non-SSE JSON body needs no [DONE].
+        if (finish is null && (!sawContent || (sawData && !sawDone)))
+            throw new InfraException("stream ended without a completion", retryable: true);
 
         var toolCalls = calls.Values.Select(c => new ToolCall(c.Id, c.Name, c.Args.ToString())).ToList();
         return new ModelResponse(text.Length > 0 ? text.ToString() : null, toolCalls, reasoning.Length > 0 ? reasoning.ToString() : null,
             finish, new Usage(input, output, reasoningTokens), new Timing(started, ttft, sw.Elapsed), rawRequest, raw.ToString());
     }
 
-    private static string? Str(JsonElement e, string name)
-        => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+    private static string? Str(JsonElement e, string name) => ProviderHttp.Str(e, name);
 
-    private static long? Long(JsonElement e, string name)
-        => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : null;
+    private static long? Long(JsonElement e, string name) => ProviderHttp.Long(e, name);
 
     private JsonObject BuildBody(ModelRequest request)
     {

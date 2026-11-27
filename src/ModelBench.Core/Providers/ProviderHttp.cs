@@ -60,7 +60,9 @@ internal static class ProviderHttp
         => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
     public static long? Long(JsonElement e, string name)
-        => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : null;
+        => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number
+            ? v.TryGetInt64(out var l) ? l : v.TryGetDouble(out var d) && d == Math.Floor(d) && Math.Abs(d) < 9e18 ? (long)d : null
+            : null;
 
     public static JsonElement Prop(JsonElement e, string name)
         => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) ? v : default;

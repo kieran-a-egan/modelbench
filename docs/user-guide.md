@@ -286,7 +286,7 @@ Because graders never call a model, a differing regrade always means a grader, f
 | `api '...' is not supported` | ModelBench runs local models only (`openai-completions`, `manual`). Hosted APIs and subscriptions are out of scope. |
 | `baseUrl host '...' is not a loopback or private-network address` | The model's endpoint is not local. Hosted OpenAI-compatible services are out of scope; point `baseUrl` at a server on your machine or LAN. |
 | `the dashboard exited during startup ... already in use?` | Another process holds the port; pass `--port`. |
-| Many `InfraError` attempts | The endpoint is down, rate-limited (HTTP 429/5xx) or timed out. Retries use backoff and `Retry-After`. Fix the cause and `run resume <run> --retry-infra`. |
+| Many `InfraError` attempts | The endpoint is down, rate-limited (HTTP 429/5xx) or timed out. Retries use exponential backoff (capped at 30 s); a server `Retry-After` is honoured even beyond that, up to 10 minutes. A stream that fails mid-way or ends without a completion is retried too. Fix the cause and `run resume <run> --retry-infra`. |
 | Code attempts are `InfraError` | Docker is not running or images are missing. Start Docker and `modelbench sandbox build`. |
 | `suite has no ToolAssisted tasks` | The run `--mode` does not match the suite's task modes. Generate a suite with families of that mode. |
 | `model configuration ... changed since the run started` | `models.json` differs from the run's snapshot. Revert it, or start a new run with the new configuration. |

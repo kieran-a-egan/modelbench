@@ -432,11 +432,11 @@ public class RetryTests
         Assert.NotEqual(p.Delay(2, run, task, 0), p.Delay(1, run, task, 0) * 2);
     }
 
-    [Fact] public void RetryAfterWinsWhenLongerButIsCappedAtMaxDelay()
+    [Fact] public void RetryAfterWinsWhenLongerEvenAboveMaxDelay()
     {
         var p = new RetryPolicy(3, 1000, 5000);
         Assert.Equal(TimeSpan.FromSeconds(3), p.Delay(0, Guid.Empty, Guid.Empty, 0, TimeSpan.FromSeconds(3)));
-        Assert.Equal(TimeSpan.FromSeconds(5), p.Delay(0, Guid.Empty, Guid.Empty, 0, TimeSpan.FromSeconds(60)));
+        Assert.Equal(TimeSpan.FromSeconds(60), p.Delay(0, Guid.Empty, Guid.Empty, 0, TimeSpan.FromSeconds(60)));
     }
 
     [Fact] public async Task ServerRetryAfterIsHonoured()
