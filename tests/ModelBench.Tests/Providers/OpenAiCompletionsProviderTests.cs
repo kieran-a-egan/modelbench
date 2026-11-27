@@ -141,4 +141,65 @@ public class OpenAiCompletionsProviderTests
         var ex = await Assert.ThrowsAsync<InfraException>(() => new OpenAiCompletionsProvider(TestKit.Model(url)).CompleteAsync(Request, default));
         Assert.True(ex.Retryable);
     }
+
+    private static Task<ModelResponse> Run(FakeServer server) => new OpenAiCompletionsProvider(TestKit.Model(server.BaseUrl)).CompleteAsync(Request, default);
+
+    [Fact] public async Task MidStreamErrorChunkIsRetryableInfraWithServerMessage()
+    {
+        await using var server = await FakeServer.StartAsync((_, _) => new FakeReply(200, [FakeReply.Delta(new JsonObject { ["content"] = "x" }), """{"error":{"message":"out of memory"}}"""]));
+        var ex = await Assert.ThrowsAsync<InfraException>(() => Run(server));
+        Assert.True(ex.Retryable);
+        Assert.Contains("out of memory", ex.Message);
+    }
+
+    [Theory] [InlineData(true)] [InlineData(false)]
+    public async Task StreamEndingWithoutCompletionIsRetryableInfra(bool sendDone)
+    {
+        await using var server = await FakeServer.StartAsync((_, _) => new FakeReply(200, [UsageOnly]), sendDone: sendDone);
+        var ex = await Assert.ThrowsAsync<InfraException>(() => Run(server));
+        Assert.True(ex.Retryable);
+        Assert.Contains("without a completion", ex.Message);
+    }
+
+    private static readonly string UsageOnly = FakeReply.UsageChunk(1, 2, null);
+
+    [Fact] public async Task MissingFinishReasonWithContentIsStillAResponse()
+    {
+        await using var server = await FakeServer.StartAsync((_, _) => new FakeReply(200, [FakeReply.Delta(new JsonObject { ["content"] = "hi" })]), sendDone: false);
+        var r = await Run(server);
+        Assert.Equal("hi", r.Text);
+        Assert.Null(r.FinishReason);
+    }
+
+    [Fact] public async Task NonSseCompletionBodyIsParsed()
+    {
+        const string body = """{"choices":[{"message":{"content":"hello","tool_calls":[{"id":"c1","function":{"name":"get","arguments":"{}"}},{"id":"c2","function":{"name":"put","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":4}}""";
+        await using var server = await FakeServer.StartAsync((_, _) => new FakeReply(200, null, body));
+        var r = await Run(server);
+        Assert.Equal("hello", r.Text);
+        Assert.Equal(["get", "put"], r.ToolCalls.Select(c => c.Name));
+        Assert.Equal("tool_calls", r.FinishReason);
+        Assert.Equal(new Usage(3, 4, null), r.Usage);
+    }
+
+    [Theory] [InlineData("<html>hi</html>")] [InlineData("""{"error":{"message":"bad"}}""")] [InlineData("")]
+    public async Task NonSseGarbageBodyIsInfra(string body)
+    {
+        await using var server = await FakeServer.StartAsync((_, _) => new FakeReply(200, null, body));
+        await Assert.ThrowsAsync<InfraException>(() => Run(server));
+    }
+
+    [Fact] public async Task MalformedJsonShapesDoNotThrow()
+    {
+        await using var server = await FakeServer.StartAsync((_, _) => new FakeReply(200,
+        [
+            """{"choices":null}""", """{"choices":{"a":1}}""", """{"choices":[1]}""", """{"choices":[{"delta":"x"}]}""", "[1]",
+            FakeReply.Delta(new JsonObject { ["tool_calls"] = new JsonArray(new JsonObject { ["index"] = 1.5, ["id"] = "c1", ["function"] = new JsonObject { ["name"] = "get", ["arguments"] = "{}" } }, 5) }),
+            FakeReply.Delta([], "tool_calls"),
+            """{"choices":[],"usage":{"prompt_tokens":12.0,"completion_tokens":7.5,"completion_tokens_details":{"reasoning_tokens":"x"}}}""",
+        ]));
+        var r = await Run(server);
+        Assert.Equal("c1", Assert.Single(r.ToolCalls).Id);
+        Assert.Equal(new Usage(12, null, null), r.Usage);
+    }
 }
