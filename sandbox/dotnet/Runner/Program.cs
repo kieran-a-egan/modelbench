@@ -22,7 +22,8 @@ var request = JsonDocument.Parse(Console.In.ReadToEnd()).RootElement;
 var timeoutMs = request.GetProperty("timeoutMs").GetInt32();
 var calls = request.GetProperty("action").GetString() == "run" ? Math.Max(1, request.GetProperty("repetitions").GetInt32()) * Math.Max(1, request.GetProperty("inputs").GetArrayLength()) : 1;
 // Hard exit after the last case could legitimately finish, so a dead host cannot leave the container running (the host kills 5 s after start).
-var watchdog = new Timer(_ => Environment.Exit(1), null, (long)timeoutMs * calls + 4_000, Timeout.Infinite);
+var watchdog = new Timer(_ => Environment.Exit(1), null, (long)timeoutMs * calls + 30_000, // well past the host's +5 s kill: only for a dead host
+    Timeout.Infinite);
 Console.SetOut(TextWriter.Null);
 Console.SetError(TextWriter.Null);
 

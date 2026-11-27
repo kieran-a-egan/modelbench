@@ -257,7 +257,7 @@ public class CodeGraderTests
         // A budget that cannot include container start-up: never within budget.
         var tight = await Grade("performance", Perf(1), Double, sb);
         Assert.False(tight[1].Passed); // the runner kills the case at 1 ms: killed at budget
-        Assert.False(tight[1].Passed);
+        Assert.Equal("killed at budget", tight[1].Actual);
         var hang = await Grade("performance", Perf(500), "def f(x):\n    while True:\n        pass\n", sb);
         Assert.All(hang, o => Assert.False(o.Passed));
         Assert.Contains("killed", hang[1].Diagnostic);
