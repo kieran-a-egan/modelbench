@@ -5,7 +5,7 @@ namespace ModelBench.Core.Grading;
 
 /// <summary>
 /// Config: { expected: json-subset }, compared with GradingContext.FinalEnvironmentState.
-/// <c>expected</c> is flattened to leaf paths (object keys joined by '.', array items as [i]); each leaf is one assertion
+/// <c>expected</c> is flattened to leaf paths (object keys joined by '.', array items as [i], plus a `.length` check so extra elements fail); each leaf is one assertion
 /// that deep-equals the value at that position of the actual state. Navigation walks the JSON structure, so keys that
 /// themselves contain '.' or '/' (file paths) are fine. An empty object/array is a leaf compared by deep equality.
 /// Explicit absence: <c>{"path": null}</c> passes only when the key is missing or null in the actual state.
@@ -34,6 +34,9 @@ public sealed class EnvStateGrader : IGrader
                     Walk(p.Value, act is { ValueKind: JsonValueKind.Object } o && o.TryGetProperty(p.Name, out var v) ? v : null, noState, path.Length == 0 ? p.Name : $"{path}.{p.Name}", results);
                 return;
             case JsonValueKind.Array when exp.GetArrayLength() > 0:
+                var len = act is { ValueKind: JsonValueKind.Array } arr ? arr.GetArrayLength() : -1;
+                results.Add(AssertionOutcome.Check($"{path}.length", len == exp.GetArrayLength(), exp.GetArrayLength().ToString(), len < 0 ? "missing" : len.ToString(),
+                    noState ? "no environment state" : $"{path}: expected {exp.GetArrayLength()} elements but got {(len < 0 ? "none" : len)}"));
                 var i = 0;
                 foreach (var item in exp.EnumerateArray())
                 {

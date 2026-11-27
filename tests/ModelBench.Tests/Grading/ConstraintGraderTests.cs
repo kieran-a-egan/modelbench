@@ -41,6 +41,13 @@ public class ConstraintGraderTests
         Assert.InRange(r.Score, 0.5, 0.99);
     }
 
+    [Fact] public async Task EachSpecContributesItsDeclaredWeightRegardlessOfAssertionCount()
+    {
+        // feasibility (weight 3, several checks, all pass) + optimality (weight 2, fails) = 3/5
+        var r = await Grade("knapsack", Knapsack, 90, Ans("""{"items":[]}"""));
+        Assert.Equal(3.0 / 5, r.Score, 12);
+    }
+
     [Theory]
     [InlineData("""{"items":[1,2,3]}""", "capacity")]
     [InlineData("""{"items":[2,9]}""", "item-ids-valid")]

@@ -13,7 +13,7 @@ namespace ModelBench.Core.Families;
 public sealed class DataTransformationFamily : IBenchmarkFamily
 {
     public string Id => "data-transformation";
-    public int Version => 1;
+    public int Version => 2; // 2: prompt says the sort uses the rounded average as reported (issue #15)
     public string Category => "data-transformation";
     public string Description => "Apply a filter, group-by, aggregate, sort and limit described in prose to a CSV/JSON table.";
     public ExecutionMode Mode => ExecutionMode.SingleTurn;
@@ -140,7 +140,7 @@ public sealed class DataTransformationFamily : IBenchmarkFamily
             "avg" => $"{a.Name} = the mean of {a.Col}, rounded to 2 decimal places (half away from zero)",
             _ => $"{a.Name} = the {(a.Fn == "sum" ? "sum" : a.Fn == "min" ? "minimum" : "maximum")} of {a.Col}",
         })) + ".");
-        sb.Ln($"{n++}. Sort the groups by {s.SortBy} {(s.Desc ? "descending" : "ascending")}; break ties by " + string.Join(", then ", s.GroupBy.Select(g => $"{g} ascending (plain character-code order)")) + ".");
+        sb.Ln($"{n++}. Sort the groups by {s.SortBy} {(s.Desc ? "descending" : "ascending")}, comparing the values exactly as reported (averages already rounded); break ties by " + string.Join(", then ", s.GroupBy.Select(g => $"{g} ascending (plain character-code order)")) + ".");
         if (s.Limit > 0) sb.Ln($"{n}. Keep only the first {s.Limit} groups.");
         var keys = s.GroupBy.Concat(s.Aggs.Select(a => a.Name)).ToArray();
         sb.Ln().Append($"Reply with a JSON array of objects, one per group in the sorted order, each with exactly the keys {string.Join(", ", keys)} ")

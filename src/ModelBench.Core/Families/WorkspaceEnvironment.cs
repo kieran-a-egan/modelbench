@@ -131,7 +131,7 @@ public sealed class WorkspaceEnvironment : ISimulatedEnvironment
     private static string Str(JsonElement a, string name)
         => a.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : throw new ToolError($"missing or non-string argument '{name}'");
 
-    private static string? Opt(JsonElement a, string name) => a.TryGetProperty(name, out _) ? Str(a, name) : null;
+    private static string? Opt(JsonElement a, string name) => a.TryGetProperty(name, out var v) && v.ValueKind != JsonValueKind.Null ? Str(a, name) : null;
 
     private static string FilePath(JsonElement a, string name)
         => Normalise(Str(a, name)) is var p && p != "/" ? p : throw new ToolError("the root is not a file");
