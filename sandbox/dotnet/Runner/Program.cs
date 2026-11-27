@@ -10,8 +10,20 @@ if (args is ["--case"]) return CaseMain();
 // Not dumpable: case processes run as the same user but cannot open /proc/1/fd/1 or /proc/1/mem to reach the frame stream (MB-004).
 if (Native.prctl(4 /* PR_SET_DUMPABLE */, 0, 0, 0, 0) != 0) throw new InvalidOperationException("prctl(PR_SET_DUMPABLE) failed");
 
+// Total JSON bytes of all cases in one frame. The host keeps the first 1 MiB (DockerSandbox.OutputCap) of the base64 frame line;
+// base64 of 1 MiB - ~100 is ~786 KB of JSON, so this leaves ~46 KB for the envelope and the "output budget exceeded" errors.
+// Keep in step with DockerSandbox.OutputCap and the Python runner.
+const int OutputBudget = 740_000;
+
+// As PID 1 a case must not be able to stop the runner: ignore SIGINT and SIGTERM (the registrations must stay referenced).
+var ignored = new[] { PosixSignal.SIGINT, PosixSignal.SIGTERM }.Select(s => PosixSignalRegistration.Create(s, c => c.Cancel = true)).ToList();
 var realOut = new StreamWriter(Console.OpenStandardOutput());
 var request = JsonDocument.Parse(Console.In.ReadToEnd()).RootElement;
+var timeoutMs = request.GetProperty("timeoutMs").GetInt32();
+var calls = request.GetProperty("action").GetString() == "run" ? Math.Max(1, request.GetProperty("repetitions").GetInt32()) * Math.Max(1, request.GetProperty("inputs").GetArrayLength()) : 1;
+// Hard exit after the last case could legitimately finish, so a dead host cannot leave the container running (the host kills 5 s after start).
+var watchdog = new Timer(_ => Environment.Exit(1), null, (long)timeoutMs * calls + 30_000, // well past the host's +5 s kill: only for a dead host
+    Timeout.Infinite);
 Console.SetOut(TextWriter.Null);
 Console.SetError(TextWriter.Null);
 
@@ -46,6 +58,7 @@ else
 
 realOut.WriteLine($"MBRESULT:{request.GetProperty("nonce").GetString()}:{Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(result))}");
 realOut.Flush();
+GC.KeepAlive(ignored); GC.KeepAlive(watchdog);
 return 0;
 
 static string Trunc(Exception e) { var s = $"{e.GetType().Name}: {e.Message}"; return s.Length > 500 ? s[..500] : s; }
@@ -55,13 +68,20 @@ List<object> Run(byte[] image)
     var entry = request.GetProperty("entryPoint").GetString()!;
     var reps = Math.Max(1, request.GetProperty("repetitions").GetInt32());
     var cases = new List<object>();
+    var used = 0;
     foreach (var (args, i) in request.GetProperty("inputs").EnumerateArray().Select((a, i) => (a, i)))
-        cases.Add(Native.Stuck ? (object)new { index = i, output = (object?)null, error = $"sandbox state could not be cleared after case {i - 1}", elapsedMs = 0.0 } : Case(i, image, entry, args, reps));
+    {
+        var c = Native.Stuck ? (object)new { index = i, output = (object?)null, error = $"sandbox state could not be cleared after case {i - 1}", elapsedMs = 0.0 } : Case(i, image, entry, args, reps, timeoutMs);
+        var size = JsonSerializer.SerializeToUtf8Bytes(c).Length;
+        if (used + size > OutputBudget) c = new { index = i, output = (object?)null, error = "output budget exceeded", elapsedMs = 0.0 };
+        else used += size;
+        cases.Add(c);
+    }
     return cases;
 }
 
 // MB-004: candidate code runs only in a child process per case. The runner checks its exit status and is the only writer of frames.
-static object Case(int index, byte[] image, string entry, JsonElement args, int reps)
+static object Case(int index, byte[] image, string entry, JsonElement args, int reps, int timeoutMs)
 {
     object Fail(string error) => new { index, output = (object?)null, error, elapsedMs = 0.0 };
     var psi = new ProcessStartInfo(Environment.ProcessPath!)
@@ -87,11 +107,14 @@ static object Case(int index, byte[] image, string entry, JsonElement args, int 
             if (kept.Length < 1 << 20) kept.Write(buf, 0, (int)Math.Min(n, (1 << 20) - kept.Length));
         return kept.ToArray();
     });
-    p.WaitForExit();
+    var limitMs = (long)timeoutMs * reps; // per-case deadline: only this case fails
+    var timedOut = !p.WaitForExit((int)Math.Min(limitMs, int.MaxValue));
+    if (timedOut) { try { p.Kill(true); } catch (InvalidOperationException) { } p.WaitForExit(); }
     var exit = p.ExitCode;
     Reap(); // the case's own children may still hold its pipes open; stopping them ends them
     drain.Wait();
     var bytes = read.Result;
+    if (timedOut) return Fail($"case timed out after {limitMs} ms");
     if (exit != 0) return Fail($"case process exited with status {exit}");
     try
     {

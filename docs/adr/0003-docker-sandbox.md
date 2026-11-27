@@ -9,7 +9,7 @@ Candidate-generated code is untrusted. It must run with no network, no secrets, 
 - Drive the `docker` CLI through `Process`, which avoids a Docker SDK dependency.
 - Use one container per sandbox request, started with:
   `--rm --network none --read-only --tmpfs /tmp:rw,size=64m --memory 256m --memory-swap 256m --cpus 1 --pids-limit 64 --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 -e HOME=/tmp -i`.
-- Pass no host environment variables and mount nothing. The request is piped to stdin and read fully by the runner before candidate code loads.
+- Pass no host environment variables beyond `HOME=/tmp` (and, for C#, `DOTNET_EnableDiagnostics=0` and `DOTNET_CLI_TELEMETRY_OPTOUT=1`), and mount nothing. The request is piped to stdin and read fully by the runner before candidate code loads.
 - The runner inside the container does all compiling, executing and AST parsing:
   - Python: `ast` + `importlib`.
   - C#: Roslyn in-memory compilation + reflection invoke.
@@ -19,7 +19,9 @@ Candidate-generated code is untrusted. It must run with no network, no secrets, 
   - after each case kills and reaps every leftover process and empties `/tmp`, `/dev/shm` and `/dev/mqueue` and removes SysV IPC objects, so no state reaches the next case.
   Compile and inspect run no candidate code and stay in the runner's process.
 - Results come back on stdout as `MBRESULT:<nonce>:<base64 json>`, written only by the runner. The nonce is random per request. The host accepts the frame only when there is exactly one matching line and the container exited 0.
-- The host enforces `TimeoutMs + 5s` by running `docker kill <name>`, and caps stdout/stderr capture at 1 MB.
+- The runner enforces `TimeoutMs` x repetitions per case by killing the case's process tree; that case's error is `case timed out after N ms` and the other cases still run. The host is the backstop: it enforces `TimeoutMs` x repetitions x inputs + 5 s (compile and inspect: `TimeoutMs` + 5 s) by running `docker kill <name>`, and reports `TimedOut` only then. A failed `docker kill` is written to stderr. The runner also exits by itself 30 s after the last case could legitimately finish (well after the host's own kill, so it never races it), so a dead host cannot leave a container running.
+- The runner ignores SIGINT and SIGTERM, so a case cannot stop it by signalling PID 1.
+- Host stdout capture is capped at 1 MB. The runner budgets the total JSON of all cases to 740 KB (base64 plus the envelope fits the cap); a case that would exceed it gets the error `output budget exceeded`. The constant is duplicated in both runners and `DockerSandbox.OutputCap` is the cap it must fit.
 - Docker unavailable or image missing raises `InfraException`. Candidate crash, timeout or OOM is a model failure.
 
 ## Consequences
@@ -27,4 +29,5 @@ Candidate-generated code is untrusted. It must run with no network, no secrets, 
 - Docker must be running for code families. When it isn't, those attempts become InfraError rather than false failures.
 - The runner sources are not secret, but output forgery is pointless because expected values never enter the container.
 - A case can still write its own pipe directly, which is equivalent to returning a value, so in-container timings are forgeable. Performance verdicts therefore use only the host-enforced wall-clock budget (ADR 0006).
-- A hung case still blocks the request until the host's wall-clock kill; there is no per-case timeout inside the container.
+- A hung case fails only itself, at its per-case deadline. `PerformanceGrader` treats a case killed at the budget like a host kill ("killed at budget").
+- The image tags are `:3`; the tag changes whenever the runner protocol does.

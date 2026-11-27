@@ -64,9 +64,10 @@ public class SandboxFunctionalTests
     public async Task Python_TimesOutOnInfiniteLoop()
     {
         var sw = Stopwatch.StartNew();
-        var r = await Py("def f():\n    while True:\n        pass\n", "f", 1000);
-        Assert.True(r.TimedOut);
-        Assert.Empty(r.Cases);
+        var r = await Py("def f(x):\n    while x:\n        pass\n    return x\n", "f", 1000, "[1]", "[0]");
+        Assert.False(r.TimedOut);
+        Assert.Equal("case timed out after 1000 ms", r.Cases[0].Error);
+        Assert.Equal("0", Out(r, 1)); // one hung case fails alone
         Assert.InRange(sw.Elapsed.TotalSeconds, 0, 20);
     }
 
@@ -120,8 +121,10 @@ public class SandboxFunctionalTests
     [Fact]
     public async Task CSharp_TimesOutOnInfiniteLoop()
     {
-        var r = await Cs("public static class S { public static int F() { while (true) { } } }", "S.F", 1000);
-        Assert.True(r.TimedOut);
+        var r = await Cs("public static class S { public static int F(int x) { while (x != 0) { } return x; } }", "S.F", 1000, "[1]", "[0]");
+        Assert.False(r.TimedOut);
+        Assert.Equal("case timed out after 1000 ms", r.Cases[0].Error);
+        Assert.Equal("0", Out(r, 1));
     }
 
     [Fact]

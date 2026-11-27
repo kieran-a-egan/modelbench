@@ -181,7 +181,7 @@ public class CodeFamilyTests
                 var json = DockerSandbox.BuildRequestJson(req, "n");
                 Assert.DoesNotContain(marker, json);
                 // Expected values are structurally absent: the wire request has only these fields.
-                Assert.Equal(["action", "code", "entryPoint", "inputs", "nonce", "repetitions"], JsonNode.Parse(json)!.AsObject().Select(p => p.Key).Order());
+                Assert.Equal(["action", "code", "entryPoint", "inputs", "nonce", "repetitions", "timeoutMs"], JsonNode.Parse(json)!.AsObject().Select(p => p.Key).Order());
             }
         }
     }

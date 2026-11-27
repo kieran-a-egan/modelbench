@@ -145,7 +145,8 @@ public class SandboxAdversarialTests
     public async Task InfiniteLoop()
     {
         var r = await Py("def f():\n    while True:\n        pass\n", "f", 1000);
-        Assert.True(r.TimedOut);
+        Assert.False(r.TimedOut); // the runner kills the case at its deadline; the host wall clock is only the backstop
+        Assert.Equal("case timed out after 1000 ms", r.Cases.Single().Error);
     }
 
     [Fact]
@@ -211,7 +212,8 @@ public class SandboxAdversarialTests
     public async Task CSharp_InfiniteLoop()
     {
         var r = await Cs("public static class S { public static int F() { while (true) { } } }", "S.F", 1000);
-        Assert.True(r.TimedOut);
+        Assert.False(r.TimedOut);
+        Assert.Equal("case timed out after 1000 ms", r.Cases.Single().Error);
     }
 
     [Fact]
@@ -230,7 +232,7 @@ public class SandboxAdversarialTests
     [Fact]
     public void RequestCarriesOnlyAllowedFields()
     {
-        var allowed = new[] { "action", "code", "entryPoint", "inputs", "repetitions", "nonce" }.Order().ToList();
+        var allowed = new[] { "action", "code", "entryPoint", "inputs", "repetitions", "timeoutMs", "nonce" }.Order().ToList();
         var json = DockerSandbox.BuildRequestJson(new SandboxRequest(SandboxLanguage.Python, SandboxAction.Run, "c", "f", [], 1, 1), "n");
         Assert.Equal(allowed, JsonDocument.Parse(json).RootElement.EnumerateObject().Select(p => p.Name).Order());
         Assert.Equal(allowed, typeof(DockerSandbox.WireRequest).GetProperties(BindingFlags.Public | BindingFlags.Instance)

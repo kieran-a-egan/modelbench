@@ -10,22 +10,26 @@ namespace ModelBench.Core.Sandbox;
 /// <summary>Runs candidate code in a locked-down container per request (ADR 0003).</summary>
 public sealed class DockerSandbox : ISandbox
 {
-    public const string PythonImage = "modelbench-python:2";
-    public const string DotnetImage = "modelbench-dotnet:2";
+    public const string PythonImage = "modelbench-python:3";
+    public const string DotnetImage = "modelbench-dotnet:3";
+    /// <summary>Stdout kept from the container. The runners' OUTPUT_BUDGET / OutputBudget must keep the base64 frame under this.</summary>
     internal const int OutputCap = 1 << 20;
+    /// <summary>Prefix of the error the runner gives a case it killed at its per-call deadline.</summary>
+    internal const string CaseTimeoutPrefix = "case timed out";
     private const int GraceMs = 5_000;
 
     /// <summary>The only fields that ever enter the container (ADR 0002).</summary>
-    public sealed record WireRequest(string Action, string Code, string EntryPoint, IReadOnlyList<JsonElement> Inputs, int Repetitions, string Nonce);
+    public sealed record WireRequest(string Action, string Code, string EntryPoint, IReadOnlyList<JsonElement> Inputs, int Repetitions, int TimeoutMs, string Nonce);
 
     private static readonly JsonSerializerOptions Wire = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public static string BuildRequestJson(SandboxRequest r, string nonce) =>
-        JsonSerializer.Serialize(new WireRequest(r.Action.ToString().ToLowerInvariant(), r.Code, r.EntryPoint, r.Inputs, r.Repetitions, nonce), Wire);
+        JsonSerializer.Serialize(new WireRequest(r.Action.ToString().ToLowerInvariant(), r.Code, r.EntryPoint, r.Inputs, r.Repetitions, r.TimeoutMs, nonce), Wire);
 
     /// <summary>
     /// Run: TimeoutMs per call, for every repetition of every input. Compile/Inspect: TimeoutMs once.
-    /// Plus 5 s grace for container start-up. Candidates are killed by the host at this limit, never trusted to self-limit.
+    /// Plus 5 s grace for container start-up. The runner kills a case at its own deadline (TimeoutMs x repetitions) and that case alone
+    /// errors; this host limit is the backstop (TimedOut) for a container that exceeds its whole wall clock, and nothing is trusted to self-limit.
     /// </summary>
     public static long WallClockMs(SandboxRequest r)
     {
@@ -104,8 +108,14 @@ public sealed class DockerSandbox : ISandbox
 
     private static async Task Kill(string name)
     {
-        try { await SandboxImages.RunDockerAsync(["kill", name], CancellationToken.None); }
-        catch (InfraException) { /* docker gone; the process kill that follows is best effort */ }
+        try
+        {
+            var (code, _, stderr) = await SandboxImages.RunDockerAsync(["kill", name], CancellationToken.None);
+            // The container may already have exited (--rm), which is fine; anything else could leave it running.
+            if (code != 0 && !stderr.Contains("No such container") && !stderr.Contains("is not running"))
+                Console.Error.WriteLine($"warning: docker kill {name} failed (exit {code}): {stderr.Trim()}; the container may still be running");
+        }
+        catch (InfraException e) { Console.Error.WriteLine($"warning: docker kill {name} failed: {e.Message}"); }
     }
 
     /// <summary>Keeps the first OutputCap bytes, discards the rest but keeps draining.</summary>
