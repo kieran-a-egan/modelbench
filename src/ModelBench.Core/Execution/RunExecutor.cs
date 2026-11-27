@@ -223,16 +223,19 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         EpisodeResult? episode = null;
         TimeSpan? inference = null; // first try to the end of the successful episode, so retries and back-off count (MB-009)
         var sw = Stopwatch.StartNew();
+        TimeSpan busy = TimeSpan.Zero, tryStart = TimeSpan.Zero; // time spent inside tries, excluding retry back-off (energy)
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(run.TimeoutSeconds));
         try
         {
             while (true)
             {
-                try { episode = await EpisodeRunner.RunAsync(run.Mode, prompt, hidden, FamilyRegistry.Get(task.FamilyId), provider, cts.Token); inference = sw.Elapsed; break; }
+                try { episode = await EpisodeRunner.RunAsync(run.Mode, prompt, hidden, FamilyRegistry.Get(task.FamilyId), provider, cts.Token); inference = sw.Elapsed; busy += inference.Value - tryStart; break; }
                 catch (InfraException ex) when (ex.Retryable && attempt.Retries < policy.MaxRetries)
                 {
+                    busy += sw.Elapsed - tryStart;
                     await Task.Delay(policy.Delay(attempt.Retries++, run.Id, task.Id, repeat, (ex as InfraException)?.RetryAfter), cts.Token);
+                    tryStart = sw.Elapsed;
                 }
             }
             // Saved before grading, so a grader failure still keeps the paid-for transcript.
@@ -269,7 +272,8 @@ public sealed class RunExecutor(IModelProvider provider, ResolvedModel model, IS
         attempt.CompletedAt = DateTimeOffset.UtcNow;
         // A failed try, or a replaced earlier attempt, consumed usage nobody recorded: report usage Unavailable, never a partial sum.
         attempt.Metrics.AddRange(MetricCalculator.Compute(episode?.Responses ?? [], inference ?? sw.Elapsed, model.Pricing, model.Energy,
-            usageComplete: episode is not null && attempt.Retries == 0 && !replacesPrior));
+            usageComplete: episode is not null && attempt.Retries == 0 && !replacesPrior,
+            inferenceTime: episode is null ? busy + (sw.Elapsed - tryStart) : busy, concurrency: run.Concurrency));
         return attempt;
     }
 }

@@ -10,7 +10,10 @@ public static class MetricCalculator
     /// <param name="wallTime">Inference time for the whole attempt, including failed tries and back-off.</param>
     /// <param name="usageComplete">False when requests outside <paramref name="responses"/> were made (a retried try, a replaced attempt):
     /// tokens, model calls and cost are then Unavailable rather than understated (MB-009).</param>
-    public static List<Metric> Compute(IReadOnlyList<ModelResponse> responses, TimeSpan wallTime, Pricing? pricing, EnergyProfile? energy, bool usageComplete = true)
+    /// <param name="inferenceTime">Time spent inside tries, excluding retry back-off; energy is charged on this (default: wallTime).</param>
+    /// <param name="concurrency">The run's worker count: the machine's watts are shared by concurrent attempts, so each bills 1/N of them.</param>
+    public static List<Metric> Compute(IReadOnlyList<ModelResponse> responses, TimeSpan wallTime, Pricing? pricing, EnergyProfile? energy, bool usageComplete = true,
+        TimeSpan? inferenceTime = null, int concurrency = 1)
     {
         var m = new List<Metric>();
         var input = usageComplete ? Sum(responses, u => u.InputTokens) : null;
@@ -31,7 +34,8 @@ public static class MetricCalculator
             ? Make(MetricNames.ThroughputTps, o / g.TotalSeconds, "tokens/s", Provenance.Calculated)
             : Unavailable(MetricNames.ThroughputTps, "tokens/s"));
 
-        if (pricing is not null && input is { } i && output is { } outTok)
+        // A server that reports reasoning outside completion tokens would make the split negative: treat cost as unavailable, not invented.
+        if (pricing is not null && input is { } i && output is { } outTok && (reasoning ?? 0) <= outTok)
         {
             // Output tokens include reasoning tokens; reasoning is billed at its own rate when one is configured.
             var r = reasoning ?? 0;
@@ -42,7 +46,7 @@ public static class MetricCalculator
 
         if (energy is not null)
         {
-            var kwh = wallTime.TotalHours * energy.Watts / 1000.0;
+            var kwh = (inferenceTime ?? wallTime).TotalHours * energy.Watts / 1000.0 / Math.Max(1, concurrency);
             m.Add(Make(MetricNames.EnergyKwh, kwh, "kWh", Provenance.Estimated));
             m.Add(Make(MetricNames.EnergyCostUsd, kwh * (double)energy.PricePerKwh, "USD", Provenance.Estimated));
         }

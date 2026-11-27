@@ -12,6 +12,7 @@ internal static class ReportCommands
     /// <summary>Magnitude-aware: large values (ms, tokens) as integers, small ones (USD) keep their significant digits.</summary>
     internal static string Num(double v) => v.ToString(Math.Abs(v) >= 100 ? "0" : Math.Abs(v) >= 1 ? "0.##" : "0.######", CultureInfo.InvariantCulture);
     private static string N(double? v) => v is { } d ? Num(d) : "-";
+    internal static string CostCell(RunSummary r) => $"{N(r.Metric(MetricNames.CostUsd).Total)} ({r.Metric(MetricNames.CostUsd).Coverage})";
     private static string D(double? v) => v is { } d ? (d > 0 ? "+" : "") + Num(d) : "-";
 
     public static IEnumerable<Command> Build(CliContext cli)
@@ -33,7 +34,7 @@ internal static class ReportCommands
                     {
                         S(r.ModelRef) + (r.Authoritative ? "" : " [INCOMPLETE, unranked]"), Short(r.RunId), r.CreatedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), F(r.EndToEndRate), F(r.PassRate), F(r.Completion), F(r.MeanScore), r.Graded.ToString(),
                         $"{r.InfraErrors}/{r.Timeouts}", F(r.Consistency), N(r.Metric(MetricNames.TimeToFirstTokenMs).Median), N(r.Metric(MetricNames.ThroughputTps).Mean),
-                        N(r.Metric(MetricNames.CostUsd).Total), N(r.CostPerSuccess),
+                        CostCell(r), N(r.CostPerSuccess),
                     }).ToList());
             }
             return Task.FromResult(0);
@@ -46,9 +47,13 @@ internal static class ReportCommands
             using var db = cli.OpenDb(pr);
             var id = ResolveId(pr.GetRequiredValue(bSuite), db.Suites.Select(x => x.Id).ToList(), "suite");
             var hash = db.Suites.Where(x => x.Id == id).Select(x => x.ContentHash).Single();
-            var b = Reports.Breakdown(db, pr.GetValue(mode), hash);
-            foreach (var (title, m) in new[] { ("CATEGORY", b.ByCategory), ("COMPLEXITY", b.ByComplexity) })
-                Table(w, [title, .. m.Columns.Select(S)], m.Models.Select((model, i) => (string[])[S(model), .. m.Cells[i].Select(F)]).ToList());
+            foreach (var v in Reports.Leaderboard(db, pr.GetValue(mode), id).Select(g => g.GradingVersion))
+            {
+                var b = Reports.Breakdown(db, pr.GetValue(mode), hash, v);
+                w.WriteLine($"\ngrading v{v}");
+                foreach (var (title, m) in new[] { ("CATEGORY", b.ByCategory), ("COMPLEXITY", b.ByComplexity) })
+                    Table(w, [title, .. m.Columns.Select(S)], m.Models.Select((model, i) => (string[])[S(model), .. m.Cells[i].Select(F)]).ToList());
+            }
             return Task.FromResult(0);
         }));
 

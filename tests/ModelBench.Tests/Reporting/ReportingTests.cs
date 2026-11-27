@@ -97,6 +97,28 @@ public class ReportingTests
         Assert.Contains("different methodologies", Assert.Throws<InvalidOperationException>(() => Reports.Compare(db, oldRun.Id, newRun.Id)).Message);
     }
 
+    [Fact] public void CliCostCellShowsCoverage()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var run = ReportSeed.AddRun(db, ReportSeed.AddSuite(db), "m/a", ST, ReportSeed.T0, new A(0, 0, Passed, Cost: 1), new A(1, 0, Failed));
+        Assert.Equal("1 (1/2)", ModelBench.Cli.Commands.ReportCommands.CostCell(Reports.Summarize(db, run.Id)));
+    }
+
+    [Fact] public void BreakdownIsKeyedByHashAndGradingVersion()
+    {
+        using var dir = new TempDir();
+        using var db = dir.OpenDb();
+        var suite = ReportSeed.AddSuite(db);
+        var oldRun = ReportSeed.AddRun(db, suite, "m/old", ST, ReportSeed.T0, new A(0, 0, Passed));
+        ReportSeed.AddRun(db, suite, "m/new", ST, ReportSeed.T0, new A(0, 0, Failed));
+        oldRun.GradingVersion = 1;
+        db.SaveChanges();
+
+        Assert.Equal(["m/old"], Reports.Breakdown(db, ST, suite.ContentHash, 1).ByCategory.Models);
+        Assert.Equal(["m/new"], Reports.Breakdown(db, ST, suite.ContentHash, Core.Grading.GradingPipeline.Version).ByCategory.Models);
+    }
+
     [Fact] public void NoGradedAttemptsMeansNoPassRate()
     {
         using var dir = new TempDir();
@@ -170,7 +192,7 @@ public class ReportingTests
         using var db = dir.OpenDb();
         var s = ReportSeed.AddSuite(db);
         ReportSeed.AddRun(db, s, "m/a", ST, ReportSeed.T0, new A(0, 0, Passed), new A(1, 0, Failed), new A(2, 0, Passed));
-        var b = Reports.Breakdown(db, ST, s.ContentHash);
+        var b = Reports.Breakdown(db, ST, s.ContentHash, Core.Grading.GradingPipeline.Version);
         Assert.Equal(["code", "math"], b.ByCategory.Columns.ToArray());
         Assert.Equal([1.0, 0.5], b.ByCategory.Cells[0]);
         Assert.Equal(["1", "2"], b.ByComplexity.Columns.ToArray());
